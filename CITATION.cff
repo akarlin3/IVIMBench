@@ -1,0 +1,171 @@
+cff-version: 1.2.0
+message: >-
+  If you use IVIMBench in your research, please cite this software and the open
+  IVIM standardization benchmarks listed under `references`. Companion IVIM
+  methodology manuscripts noted below are PRE-PUBLICATION (no publication DOI
+  yet); any Zenodo DOIs in their notes refer to software archives rather than
+  peer-reviewed journal articles.
+title: "IVIMBench: Standardized digital reference phantoms, clinical acquisition schedules, and uncertainty calibration benchmarks for quantitative IVIM MRI"
+abstract: >-
+  IVIMBench is a unified, open-source Python evaluation suite for quantitative
+  intravoxel incoherent motion (IVIM) diffusion MRI. It consolidates
+  physiologically grounded organ parameter samplers and 2D/3D spatial Digital
+  Reference Objects (DROs) with exact Rician and multi-coil non-central chi
+  noise injection, standardized clinical b-value protocols (OSIPI TF2.4,
+  TCGA-LIHC, ACRIN 6698), reference estimators (NLLS, Two-Step Segmented,
+  heteroscedastic MLP), and distribution-free uncertainty calibration metrics
+  including D*-tercile and SNR-stratified conditional coverage, Cramér-Rao
+  lower bound (CRLB) efficiency ratios, and boundary-railing bootstrap
+  diagnostics. All cohorts and phantoms are synthetic and PHI-free.
+type: software
+authors:
+  - given-names: Avery
+    family-names: Karlin
+    email: ak5232@columbia.edu
+    orcid: "https://orcid.org/0000-0003-3848-6782"
+version: "1.0.0"
+date-released: "2026-11-10"
+license: MIT
+repository-code: "https://github.com/akarlin3/IVIMBench"
+url: "https://github.com/akarlin3/IVIMBench"
+keywords:
+  - IVIM
+  - diffusion-MRI
+  - digital-reference-object
+  - uncertainty-quantification
+  - calibration
+  - conformal-prediction
+  - Cramer-Rao-lower-bound
+  - OSIPI
+  - benchmark
+references:
+  - type: software
+    title: "OSIPI Taskforce 2.4: IVIM-MRI Code Collection and Reference Digital Reference Object"
+    authors:
+      - name: "Open Source Initiative for Perfusion Imaging (OSIPI) Taskforce 2.4"
+    year: 2025
+    doi: "10.5281/zenodo.14605039"
+    url: "https://doi.org/10.5281/zenodo.14605039"
+    license: CC-BY-4.0
+    notes: >-
+      Open IVIM standardization benchmark and Zenodo archive providing the
+      standardized 12-b abdominal IVIM protocol and synthetic reference DRO.
+  - type: article
+    title: >-
+      Separation of diffusion and perfusion in intravoxel incoherent motion MR
+      imaging
+    authors:
+      - given-names: Denis
+        family-names: Le Bihan
+      - given-names: Eric
+        family-names: Breton
+      - given-names: Denis
+        family-names: Lallemand
+      - given-names: Marie-Louise
+        family-names: Aubin
+      - given-names: Jacqueline
+        family-names: Vignaud
+      - given-names: Maurice
+        family-names: Laval-Jeantet
+    journal: "Radiology"
+    volume: 168
+    issue: 2
+    start: 497
+    end: 505
+    year: 1988
+    doi: "10.1148/radiology.168.2.3393671"
+  - type: data
+    title: "The Cancer Genome Atlas Liver Hepatocellular Carcinoma Collection (TCGA-LIHC)"
+    authors:
+      - family-names: Erickson
+        given-names: Bradley J.
+      - family-names: Kirk
+        given-names: Shanah
+      - family-names: Lee
+        given-names: Yulia
+      - family-names: Bathe
+        given-names: Oliver
+      - family-names: Kearns
+        given-names: Michael
+      - family-names: Gerdes
+        given-names: Carol
+      - family-names: Rieger-Christ
+        given-names: Kimberly
+      - family-names: Lemmerman
+        given-names: John
+    year: 2016
+    doi: "10.7937/K9/TCIA.2016.IMMQW8UQ"
+    notes: >-
+      Open clinical hepatic DWI collection on The Cancer Imaging Archive (TCIA)
+      defining the 4-b and sparse 3-b TCGA-LIHC acquisition schedules.
+  - type: data
+    title: >-
+      Data from ACRIN-6698/I-SPY2 Breast DWI
+    authors:
+      - family-names: Newitt
+        given-names: David C.
+      - family-names: Partridge
+        given-names: Savannah C.
+      - family-names: Zhang
+        given-names: Zheng
+      - family-names: Gibbs
+        given-names: Jessica
+      - family-names: Chenevert
+        given-names: Thomas L.
+      - family-names: Rosen
+        given-names: Mark A.
+      - family-names: Bolan
+        given-names: Patrick J.
+      - family-names: Marques
+        given-names: Henrique S.
+      - family-names: Romanoff
+        given-names: Justin
+      - family-names: Cimino
+        given-names: Lisa
+      - family-names: Joe
+        given-names: Bonnie N.
+      - family-names: Umphrey
+        given-names: Heidi R.
+      - family-names: Ojeda-Fournier
+        given-names: Haydee
+      - family-names: Dogan
+        given-names: Basak
+      - family-names: Oh
+        given-names: Karen Y.
+      - family-names: Abe
+        given-names: Hiroyuki
+      - family-names: Drukteinis
+        given-names: Jennifer S.
+      - family-names: Esserman
+        given-names: Laura J.
+      - family-names: Hylton
+        given-names: Nola M.
+    year: 2019
+    doi: "10.7937/TCIA.2019.CWVLPD26"
+    notes: >-
+      Multi-center clinical breast DWI benchmark defining the standardized 4-b
+      ACRIN 6698 schedule (0, 100, 600, 800 s/mm^2).
+  - type: software
+    title: "Zenodo Software Archive for Companion Conformal IVIM UQ Codebase"
+    authors:
+      - given-names: Avery
+        family-names: Karlin
+        orcid: "https://orcid.org/0000-0003-3848-6782"
+    year: 2026
+    doi: "10.5281/zenodo.20686273"
+    notes: >-
+      Zenodo software archive associated with the PRE-PUBLICATION manuscript
+      "Distribution-Free Conformal Coverage for IVIM Parameter Maps, and the
+      Identifiability Wall in the Pseudo-Diffusion Compartment" (submitted, no
+      publication DOI yet).
+  - type: software
+    title: "Zenodo Software Archive for Companion IVIM Boundary-Railing & Calibration Codebase"
+    authors:
+      - given-names: Avery
+        family-names: Karlin
+        orcid: "https://orcid.org/0000-0003-3848-6782"
+    year: 2026
+    doi: "10.5281/zenodo.20649669"
+    notes: >-
+      Zenodo software archive associated with the PRE-PUBLICATION boundary-railing
+      and IVIM calibration work (submitted, no publication DOI yet).

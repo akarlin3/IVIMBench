@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling>=1.18.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ivimbench"
+version = "1.0.0"
+description = "Standardized digital reference phantoms, clinical acquisition schedules, and uncertainty calibration benchmarks for quantitative IVIM MRI"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Avery Karlin", email = "ak5232@columbia.edu" }
+]
+keywords = [
+    "IVIM",
+    "diffusion MRI",
+    "DWI",
+    "digital reference object",
+    "uncertainty quantification",
+    "calibration",
+    "conformal prediction",
+    "Cramer-Rao lower bound",
+    "OSIPI",
+    "benchmark",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.22.0",
+    "scipy>=1.8.0",
+    "pandas>=1.4.0",
+]
+
+[project.optional-dependencies]
+vis = [
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/akarlin3/IVIMBench"
+Repository = "https://github.com/akarlin3/IVIMBench"
+Issues = "https://github.com/akarlin3/IVIMBench/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ivimbench"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CITATION.cff",
+    "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
