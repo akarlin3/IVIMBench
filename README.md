@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![Typed: PEP 561](https://img.shields.io/badge/typing-PEP%20561-informational.svg)](src/ivimbench/py.typed)
-[![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-green.svg)](pyproject.toml)
+[![Version 1.2.0](https://img.shields.io/badge/version-1.2.0-green.svg)](pyproject.toml)
 
 `IVIMBench` provides a unified, zero-PHI, purely NumPy/SciPy/Pandas benchmark platform for intravoxel incoherent motion (IVIM) diffusion MRI:
 
@@ -16,21 +16,22 @@ All parameters use canonical physical MRI units across the entire library: diffu
 
 ---
 
-## Architecture Overview (v1.1.0)
+## Architecture Overview (v1.2.0)
 
-1. **Estimator Registry & Multi-Task Benchmark Runner (`ivimbench.registry`, `ivimbench.runner`)** — `@register_estimator` protocol accepting any callable or class fitting `(signals, bvalues) -> {D, D_star, f, intervals?}`, shipped with pure NumPy/SciPy deterministic baselines (`"segmented"`, `"nlls"`, `"crlb"`) and `run_benchmark_suite(...)` exporting reproducible Markdown, JSON, LaTeX, and CSV tables across 5 forward families, SNR regimes, and clinical schedules.
-2. **Acquisition Design & NEX-Weighted Fisher Information (`ivimbench.acquisition`)** — Closed-form IVIM Fisher Information Matrix (`ivim_fisher_matrix`), Cramér–Rao Lower Bounds (`compute_crlb`) with explicit scan-time / NEX weighting, `SchemeEvaluator`, and `optimize_b_schedule(...)` reporting sharpness (`delta_sharp`), marginal coverage, and high-$D^*$ conditional coverage (`delta_cond`).
-3. **Misspecification & Scan–Rescan Repeatability Harnesses (`ivimbench.harnesses`)** —
+1. **Estimator Registry, Dual-SD Conventions & Optional `[torch]` MAF (`ivimbench.registry`, `ivimbench.baselines`, `ivimbench.metrics.coverage`)** — `@register_estimator` protocol accepting any callable or class fitting `(signals, bvalues) -> {D, D_star, f, intervals?}`, shipped with pure NumPy/SciPy deterministic baselines (`"segmented"`, `"nlls"`, `"crlb"`), an optional conditional Masked Autoregressive Flow posterior baseline (`MAFPosteriorEstimator` via `ivimbench[torch]`), and an explicit `sd_convention: Literal["honest_crlb", "floored_railed"] = "honest_crlb"` toggle contrasting honest Fisher/CRLB intervals against legacy railed-voxel SD flooring artifacts.
+2. **Clean-Room Forward Physics Self-Checks & Optional OSIPI Fetcher (`ivimbench.phantoms.selfcheck`, `ivimbench.osipi`)** — Programmatic verification helpers (`verify_continuity_limits`, `run_nlls_roundtrip_selfcheck`, `Cohort.to_scorer_inputs()`) proving machine-epsilon continuity reduction and `<= 1e-9` noiseless NLLS recovery, paired with a network-isolated, MD5-verified `fetch_osipi_dro(...)` fetcher for the external Zenodo OSIPI TF2.4 reference archive (`10.5281/zenodo.14605039`).
+3. **Acquisition Design & NEX-Weighted Fisher Information (`ivimbench.acquisition`)** — Closed-form IVIM Fisher Information Matrix (`ivim_fisher_matrix`), Cramér–Rao Lower Bounds (`compute_crlb`) with explicit scan-time / NEX weighting, `SchemeEvaluator`, and `optimize_b_schedule(...)` reporting sharpness (`delta_sharp`), marginal coverage, and high-$D^*$ conditional coverage (`delta_cond`).
+4. **Misspecification & Scan–Rescan Repeatability Harnesses (`ivimbench.harnesses`)** —
    - `MisspecificationHarness`: Evaluates bi-exponential estimators under controlled non-bi-exponential forward physics (`dispersion_gamma`, `dispersion_lognormal`, `stretched`, `triexp`, `kurtosis`, `heavy_tail`), explicitly separating global marginal coverage from slow-diffusion $D$ vs. pseudo-diffusion $D^*$ conditional degradation.
    - `RepeatabilityHarness`: Simulates paired same-session acquisitions (`scan_A`, `scan_B`) under exact Rician or multi-coil non-central $\chi$ noise with optional SNR/gain/coil drift, scoring ground-truth-free retest capture alongside Spearman width-vs-scatter rank correlation.
-4. **Clinical Decision Value & Domain-Shift Safeguards (`ivimbench.decision`)** — Threshold utility pricing (`evaluate_decision_voi`, `compare_decision_calibration`) computing expected utility regret, the decision–calibration gap, and second-order Value of Information (`second_order_voi`) across clinical action cutoffs $\tau$, paired with a two-sample observable Mahalanobis signal-space + residual-space staleness detector (`check_domain_shift`).
-5. **Enriched 2D/3D Anatomical DROs & CLI (`ivimbench.phantoms`, `ivimbench.cli`)** — Structured `liver`, `pancreas` (desmoplastic fibrotic/hypovascular core + steep hypervascular perfusion rim), and `breast` (ACRIN-6698 aligned) phantoms with optional spatial $B_1$ and surface-coil SNR inhomogeneity maps, plus the `ivimbench` console entry point.
+5. **Clinical Decision Value & Domain-Shift Safeguards (`ivimbench.decision`)** — Threshold utility pricing (`evaluate_decision_voi`, `compare_decision_calibration`) computing expected utility regret, the decision–calibration gap, and second-order Value of Information (`second_order_voi`) across clinical action cutoffs $\tau$, paired with a two-sample observable Mahalanobis signal-space + residual-space staleness detector (`check_domain_shift`).
+6. **Enriched 2D/3D Anatomical DROs & CLI (`ivimbench.phantoms`, `ivimbench.cli`)** — Structured `liver`, `pancreas` (desmoplastic fibrotic/hypovascular core + steep hypervascular perfusion rim), and `breast` (ACRIN-6698 aligned) phantoms with optional spatial $B_1$ and surface-coil SNR inhomogeneity maps, plus the `ivimbench` console entry point.
 
 ---
 
 ## Installation
 
-Install from GitHub or PyPI:
+Install from GitHub or PyPI (core dependencies remain strictly `numpy`, `scipy`, and `pandas` — zero PyTorch required):
 
 ```bash
 pip install git+https://github.com/akarlin3/IVIMBench.git
@@ -39,6 +40,9 @@ pip install ivimbench
 
 # Optional matplotlib/seaborn diagnostic plotting extras:
 pip install "ivimbench[vis]"
+
+# Optional PyTorch Masked Autoregressive Flow (MAFPosteriorEstimator) baseline:
+pip install "ivimbench[torch]"
 ```
 
 For local development, linting, static type-checking, and testing:
@@ -48,6 +52,7 @@ git clone https://github.com/akarlin3/IVIMBench.git
 cd IVIMBench
 pip install -e ".[dev]"
 pytest -q
+ivimbench selfcheck
 ```
 
 ---
@@ -57,13 +62,16 @@ pytest -q
 `IVIMBench` installs the `ivimbench` console script for immediate reproducible benchmarking:
 
 ```bash
-# 1. Fast (<10s) end-to-end synthetic DRO + multi-family calibration, repeatability & VoI smoke benchmark
+# 1. Clean-room continuity-limit residual & noiseless bi-exponential NLLS round-trip self-check
+ivimbench selfcheck
+
+# 2. Fast (<10s) end-to-end synthetic DRO + multi-family calibration, repeatability & VoI smoke benchmark
 ivimbench demo
 
-# 2. Multi-task benchmark across all 5 forward families, exporting Markdown, JSON, LaTeX & CSV tables
+# 3. Multi-task benchmark across all 5 forward families, exporting Markdown, JSON, LaTeX & CSV tables
 ivimbench benchmark --protocol osipi --snr 30 --out results/
 
-# 3. Compare fixed clinical schedules (and optional CRLB/calibration-optimized designs)
+# 4. Compare fixed clinical schedules (and optional CRLB/calibration-optimized designs)
 ivimbench compare-schemes --schemes osipi,acrin_6698 --include-optimized
 ```
 
@@ -194,6 +202,30 @@ $$R(\hat{a}; \tau) = \frac{1}{N}\sum_{i=1}^N \Big[ c \, \hat{a}_i (1 - E_i) + (1
 - **Second-Order Value of Information (`second_order_voi`)**: $R(\hat{a}_{\text{raw}}; \tau) - R(\hat{a}_{\text{cal}}; \tau)$, pricing the expected clinical utility gained purely by calibrating predictive uncertainty.
 - **Observable Domain-Shift Check (`check_domain_shift`)**: Computes two-sample regularized Mahalanobis distances, reference-quantile outlier rates, and deterministic `PCG64` permutation $p$-values across normalized signal-decay space and bi-exponential fit residual space.
 
+### 5. Dual-SD Railed-Voxel Convention (`sd_convention`) & Clean-Room Self-Checks (`ivimbench.metrics`, `ivimbench.phantoms`)
+Bounded IVIM solvers (`NLLSEstimator`, `CRLBNormalEstimator`, `crlb_normal_intervals`, `BenchmarkSuite`, and `ivimbench.metrics.coverage`) expose an explicit `sd_convention: Literal["honest_crlb", "floored_railed"] = "honest_crlb"` diagnostic toggle:
+- **`"honest_crlb"` (default)**: Evaluates full unclipped Fisher/CRLB standard deviations at the fitted parameters, reproducing honest marginal coverage (~0.80–0.90) while localizing under-coverage conditionally to the high-$D^*$ tercile where exponential sensitivity vanishes.
+- **`"floored_railed"`**: Collapses standard deviations of boundary-railed voxels onto a tiny floor (`DEFAULT_RAILED_SD_FLOOR = 3e-3` in physical units), reproducing legacy over-confident railed-voxel intervals so researchers can inspect how severe marginal under-coverage artifacts (~0.30–0.67) arise when boundary-railed fits are assigned collapsed uncertainty.
+
+Programmatic physics and clean-room verification helpers (`verify_continuity_limits()`, `run_nlls_roundtrip_selfcheck()`, and `ivimbench selfcheck`) verify exact machine-precision reduction (`0.0`) for `dispersion_lognormal`, `stretched`, and `triexp`, `<= 1e-8` (`~3.9e-9` at $k = 10^8$) for `dispersion_gamma`, and `<= 1e-9` (`<= 7.99e-10`) relative error on noiseless bounded NLLS parameter recovery. Optional PyTorch Masked Autoregressive Flow posteriors (`MAFPosteriorEstimator` via `pip install "ivimbench[torch]"`) and MD5-pinned OSIPI TF2.4 Zenodo DRO downloads (`fetch_osipi_dro`) are provided without adding heavy or network-active dependencies to core installs.
+
+```python
+from ivimbench import (
+    CRLBNormalEstimator,
+    MAFPosteriorEstimator,  # requires `pip install "ivimbench[torch]"`
+    run_nlls_roundtrip_selfcheck,
+    verify_continuity_limits,
+)
+
+# Verify analytical continuity limits and noiseless NLLS round-trip accuracy
+limits = verify_continuity_limits()
+roundtrip = run_nlls_roundtrip_selfcheck()
+
+# Compare honest Fisher/CRLB SDs vs. legacy floored boundary-railed SDs
+est_honest = CRLBNormalEstimator(sd_convention="honest_crlb")
+est_floored = CRLBNormalEstimator(sd_convention="floored_railed")
+```
+
 ---
 
 ## Repository Structure
@@ -201,39 +233,41 @@ $$R(\hat{a}; \tau) = \frac{1}{N}\sum_{i=1}^N \Big[ c \, \hat{a}_i (1 - E_i) + (1
 ```text
 IVIMBench/
 ├── .github/workflows/
-│   ├── ci.yml                  # Ruff, Mypy, Pytest & CLI smoke matrix (Python 3.10–3.12)
-│   └── publish.yml             # Tagged wheel/sdist build, Twine check & GitHub Release upload
-├── pyproject.toml              # PEP 621 metadata, console script & tool configs
+│   ├── ci.yml                      # Ruff, Mypy, Pytest & CLI smoke matrix (Python 3.10–3.12)
+│   └── publish.yml                 # Tagged wheel/sdist build, Twine check & GitHub Release upload
+├── pyproject.toml                  # PEP 621 metadata, optional `[torch]` extra & tool configs
 ├── README.md
 ├── LICENSE
 ├── CITATION.cff
 ├── src/ivimbench/
 │   ├── __init__.py
 │   ├── _version.py
-│   ├── py.typed                # PEP 561 typed package marker
-│   ├── cli.py                  # `ivimbench` CLI (`demo`, `benchmark`, `compare-schemes`)
-│   ├── registry.py             # `@register_estimator` protocol & built-in registrations
-│   ├── runner.py               # Multi-task runner + Markdown/JSON/LaTeX/CSV exporters
-│   ├── protocols.py            # Clinical b-schedules (OSIPI TF2.4, TCGA-LIHC, ACRIN 6698)
-│   ├── evaluate.py             # Core BenchmarkSuite & BenchmarkReport
-│   ├── vis.py                  # Calibration curves & D*-tercile bar plots
+│   ├── py.typed                    # PEP 561 typed package marker
+│   ├── cli.py                      # `ivimbench` CLI (`demo`, `benchmark`, `compare-schemes`, `selfcheck`)
+│   ├── osipi.py                    # Network-isolated MD5-verified OSIPI TF2.4 Zenodo DRO fetcher
+│   ├── registry.py                 # `@register_estimator` protocol & built-in registrations
+│   ├── runner.py                   # Multi-task runner + Markdown/JSON/LaTeX/CSV exporters
+│   ├── protocols.py                # Clinical b-schedules (OSIPI TF2.4, TCGA-LIHC, ACRIN 6698)
+│   ├── evaluate.py                 # Core BenchmarkSuite & BenchmarkReport (`sd_convention` aware)
+│   ├── vis.py                      # Calibration curves & D*-tercile bar plots
 │   ├── acquisition/
-│   │   ├── crlb.py             # Analytical NEX/scan-time Fisher matrix & CRLB calculator
-│   │   └── design.py           # `SchemeEvaluator` & `optimize_b_schedule`
+│   │   ├── crlb.py                 # Analytical NEX/scan-time Fisher matrix & CRLB calculator
+│   │   └── design.py               # `SchemeEvaluator` & `optimize_b_schedule`
 │   ├── harnesses/
-│   │   ├── misspecification.py # Non-bi-exponential stress harness (D vs D* separation)
-│   │   └── repeatability.py    # Rician / nc-chi scan-rescan harness & Spearman sizing
+│   │   ├── misspecification.py     # Non-bi-exponential stress harness (D vs D* separation)
+│   │   └── repeatability.py        # Rician / nc-chi scan-rescan harness & Spearman sizing
 │   ├── decision/
-│   │   └── voi.py              # Threshold utility regret, 2nd-order VoI & domain-shift check
+│   │   └── voi.py                  # Threshold utility regret, 2nd-order VoI & domain-shift check
 │   ├── phantoms/
-│   │   ├── synthetic.py        # Organ priors & multi-compartment forward models
-│   │   ├── dro.py              # 2D/3D liver, pancreas & breast DROs + B1/SNR maps
-│   │   └── noise.py            # Exact Rician & multi-coil non-central chi injectors
+│   │   ├── synthetic.py            # Organ priors, `Cohort`/`to_scorer_inputs()` & forward models
+│   │   ├── selfcheck.py            # Continuity-limit & noiseless NLLS round-trip diagnostics
+│   │   ├── dro.py                  # 2D/3D liver, pancreas & breast DROs + B1/SNR maps
+│   │   └── noise.py                # Exact Rician & multi-coil non-central chi injectors
 │   ├── metrics/
-│   │   ├── coverage.py         # Marginal, SNR- & D*-tercile coverage + conformal wrappers
-│   │   ├── sharpness.py        # Absolute/normalized width & CRLB efficiency ratios
-│   │   └── railing.py          # Boundary railing fractions & bootstrap CIs
-│   └── baselines/              # Segmented, simultaneous NLLS, CRLBNormal & MLP baselines
+│   │   ├── coverage.py             # Marginal/tercile coverage, `sd_convention` & conformal wrappers
+│   │   ├── sharpness.py            # Absolute/normalized width & CRLB efficiency ratios
+│   │   └── railing.py              # Boundary railing fractions & bootstrap CIs
+│   └── baselines/                  # Segmented, NLLS, CRLBNormal, MLP & optional `[torch]` MAF
 └── tests/
     ├── test_acquisition.py
     ├── test_decision.py
@@ -242,7 +276,8 @@ IVIMBench/
     ├── test_metrics.py
     ├── test_phantoms.py
     ├── test_protocols.py
-    └── test_registry_and_runner.py
+    ├── test_registry_and_runner.py
+    └── test_selfcheck_and_conventions.py
 ```
 
 ---

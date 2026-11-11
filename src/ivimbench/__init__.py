@@ -7,6 +7,7 @@ from . import (
     decision,
     harnesses,
     metrics,
+    osipi,
     phantoms,
     protocols,
     registry,
@@ -23,7 +24,14 @@ from .acquisition import (
     ivim_fisher_matrix,
     optimize_b_schedule,
 )
-from .baselines import CRLBNormalEstimator, MLPEstimator, NLLSEstimator, SegmentedEstimator
+from .baselines import (
+    CRLBNormalEstimator,
+    MAFPosteriorEstimator,
+    MLPEstimator,
+    NLLSEstimator,
+    SegmentedEstimator,
+    crlb_normal_intervals,
+)
 from .decision import (
     DecisionVoIReport,
     DomainShiftReport,
@@ -42,15 +50,20 @@ from .harnesses import (
     evaluate_repeatability,
     simulate_scan_rescan,
 )
+from .osipi import ExternalDRO, fetch_osipi_dro, load_osipi_dro
 from .phantoms import (
     ORGAN_DRO_PRESETS,
     PARAM_NAMES,
+    Cohort,
     DigitalReferenceObject,
     LesionSpec,
     OrganDROPreset,
     SyntheticCohort,
     generate_cohort,
     generate_dro,
+    run_nlls_roundtrip_selfcheck,
+    to_scorer_inputs,
+    verify_continuity_limits,
 )
 from .protocols import PROTOCOLS, AcquisitionProtocol, get_protocol, list_protocols
 from .registry import (
@@ -72,7 +85,14 @@ __all__ = [
     "generate_cohort",
     "generate_dro",
     "SyntheticCohort",
+    "Cohort",
+    "to_scorer_inputs",
+    "verify_continuity_limits",
+    "run_nlls_roundtrip_selfcheck",
     "DigitalReferenceObject",
+    "ExternalDRO",
+    "fetch_osipi_dro",
+    "load_osipi_dro",
     "LesionSpec",
     "OrganDROPreset",
     "ORGAN_DRO_PRESETS",
@@ -85,7 +105,9 @@ __all__ = [
     "SegmentedEstimator",
     "NLLSEstimator",
     "CRLBNormalEstimator",
+    "crlb_normal_intervals",
     "MLPEstimator",
+    "MAFPosteriorEstimator",
     "DEFAULT_REGISTERED_ESTIMATORS",
     "RegisteredEstimator",
     "NormalizedEstimatorOutput",
@@ -114,12 +136,13 @@ __all__ = [
     "evaluate_repeatability",
     "DecisionVoIReport",
     "DomainShiftReport",
-    "evaluate_decision_voi",
-    "compare_decision_calibration",
     "check_domain_shift",
+    "compare_decision_calibration",
+    "evaluate_decision_voi",
     "plot_calibration_curves",
     "plot_tercile_coverage",
     "phantoms",
+    "osipi",
     "protocols",
     "metrics",
     "baselines",

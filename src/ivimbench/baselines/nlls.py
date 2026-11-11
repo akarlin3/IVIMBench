@@ -19,7 +19,13 @@ import numpy as np
 from scipy import stats
 from scipy.optimize import least_squares
 
-from ..metrics.coverage import DEFAULT_QUANTILE_LEVELS
+from ..metrics.coverage import (
+    DEFAULT_QUANTILE_LEVELS,
+    DEFAULT_RAILED_SD_FLOOR,
+    SDConvention,
+    apply_sd_convention,
+    normalize_sd_convention,
+)
 from ..metrics.railing import DEFAULT_PARAM_BOUNDS, DEFAULT_RAIL_TOL
 from ..protocols import AcquisitionProtocol, resolve_bvalues
 
@@ -74,10 +80,12 @@ class NLLSEstimator:
         Multiplicative bounds relative to observed ``S(b_min)`` for ``S0``.
     init : tuple of (float, float, float), default=(1.1e-3, 25.0e-3, 0.15)
         Shared neutral initialization ``(D0, Dstar0, f0)``.
-    sd_convention : {"honest", "floored"}, default="honest"
-        Convention for asymptotic SD on railed ``D*`` voxels.
+    sd_convention : {"honest_crlb", "floored_railed"}, default="honest_crlb"
+        Convention for asymptotic SD on boundary-railed voxels (legacy aliases
+        ``"honest"`` and ``"floored"`` are also accepted).
     railed_sd_floor : float, default=3.0e-3
-        Narrow floored SD (``mm^2/s``) applied when ``sd_convention="floored"``.
+        Collapsed SD floor (``mm^2/s``) applied when
+        ``sd_convention="floored_railed"``.
     rail_tol : float, default=1e-2
         Relative tolerance for flagging boundary-railed parameters.
     max_nfev : int, default=300
@@ -88,8 +96,8 @@ class NLLSEstimator:
     bounds: Mapping[str, tuple[float, float]] | None = None
     s0_bounds: tuple[float, float] = (0.1, 2.5)
     init: tuple[float, float, float] = (1.1e-3, 25.0e-3, 0.15)
-    sd_convention: str = "honest"
-    railed_sd_floor: float = 3.0e-3
+    sd_convention: SDConvention | str = "honest_crlb"
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR
     rail_tol: float = DEFAULT_RAIL_TOL
     sigma_floor: float = 1e-8
     max_nfev: int = 300
@@ -101,16 +109,25 @@ class NLLSEstimator:
         if self.bounds is not None:
             active.update(self.bounds)
         self._bounds = active
-        if self.sd_convention not in ("honest", "floored"):
-            raise ValueError("`sd_convention` must be 'honest' or 'floored'.")
+        self.sd_convention = normalize_sd_convention(self.sd_convention)
 
     def fit(self, signals: np.ndarray | None = None, params: np.ndarray | None = None) -> NLLSEstimator:
         """No-op fit method for API parity with learned estimators."""
         _ = (signals, params)
         return self
 
-    def solve(self, signals: np.ndarray) -> NLLSFitResult:
+    def solve(
+        self,
+        signals: np.ndarray,
+        *,
+        sd_convention: SDConvention | str | None = None,
+    ) -> NLLSFitResult:
         """Fit ``(S0, D, Dstar, f)`` and asymptotic SDs across ``(n, n_b)`` signals."""
+        conv = (
+            normalize_sd_convention(self.sd_convention)
+            if sd_convention is None
+            else normalize_sd_convention(sd_convention)
+        )
         sig = np.atleast_2d(np.asarray(signals, dtype=np.float64))
         b = self.bvalues
         if sig.shape[1] != b.size:
@@ -174,8 +191,15 @@ class NLLSEstimator:
             (hi3[None, :] - params_out) <= self.rail_tol * spans3[None, :]
         )
 
-        if self.sd_convention == "floored":
-            sigma_out[railed[:, 1], 1] = float(self.railed_sd_floor)
+        if conv == "floored_railed":
+            sigma_out = apply_sd_convention(
+                sigma_out,
+                sd_convention="floored_railed",
+                railed_mask=railed,
+                bounds=self._bounds,
+                rail_tol=self.rail_tol,
+                railed_sd_floor=float(self.railed_sd_floor),
+            )
 
         return NLLSFitResult(
             params=params_out,
@@ -195,9 +219,11 @@ class NLLSEstimator:
         self,
         signals: np.ndarray,
         alpha: float = 0.10,
+        *,
+        sd_convention: SDConvention | str | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return central ``(1 - alpha)`` asymptotic Gaussian intervals ``(lower, upper)``."""
-        fit = self.solve(signals)
+        fit = self.solve(signals, sd_convention=sd_convention)
         z = float(stats.norm.ppf(1.0 - 0.5 * float(alpha)))
         return fit.params - z * fit.sigma, fit.params + z * fit.sigma
 
@@ -205,12 +231,14 @@ class NLLSEstimator:
         self,
         signals: np.ndarray,
         q_levels: Sequence[float] | np.ndarray = DEFAULT_QUANTILE_LEVELS,
+        *,
+        sd_convention: SDConvention | str | None = None,
     ) -> np.ndarray:
         """Return ``(n, 3, n_levels)`` asymptotic Gaussian quantile predictions."""
         levels = np.asarray(q_levels, dtype=np.float64)
         if np.any((levels <= 0.0) | (levels >= 1.0)):
             raise ValueError("`q_levels` must lie strictly in (0, 1).")
-        fit = self.solve(signals)
+        fit = self.solve(signals, sd_convention=sd_convention)
         z = stats.norm.ppf(levels)
         return fit.params[:, :, None] + fit.sigma[:, :, None] * z[None, None, :]
 

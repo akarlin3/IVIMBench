@@ -3,6 +3,8 @@
 Supports:
 - ``ivimbench demo``: Fast (<10s) end-to-end synthetic DRO + multi-family
   calibration, repeatability, and decision-utility smoke benchmark.
+- ``ivimbench selfcheck``: Clean-room continuity-limit residual and noiseless
+  bi-exponential NLLS round-trip verification table.
 - ``ivimbench benchmark --protocol osipi --snr 30 --out results/``: Multi-task
   runner exporting reproducible Markdown, JSON, and LaTeX summary tables.
 - ``ivimbench compare-schemes --schemes osipi,acrin_6698``: Acquisition-design
@@ -25,6 +27,7 @@ from .acquisition.design import SchemeEvaluator
 from .decision.voi import check_domain_shift, evaluate_decision_voi
 from .harnesses.repeatability import evaluate_repeatability, simulate_scan_rescan
 from .phantoms.dro import generate_dro
+from .phantoms.selfcheck import run_nlls_roundtrip_selfcheck, verify_continuity_limits
 from .phantoms.synthetic import FAMILIES, generate_cohort
 from .registry import DEFAULT_REGISTERED_ESTIMATORS, run_estimator
 from .runner import DEFAULT_BENCHMARK_FAMILIES, dataframe_to_markdown, run_benchmark_suite
@@ -216,6 +219,60 @@ def _cmd_compare_schemes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_selfcheck(args: argparse.Namespace) -> int:
+    t_start = time.perf_counter()
+    seed = int(args.seed)
+    cont = verify_continuity_limits(
+        organ="generic",
+        protocol="lattice_22b",
+        n_voxels=int(args.n_voxels),
+        seed=seed,
+        check=False,
+    )
+    rt = run_nlls_roundtrip_selfcheck(
+        organ="generic",
+        protocol="lattice_22b",
+        n_voxels=int(args.roundtrip_voxels),
+        seed=seed,
+        check=False,
+    )
+    elapsed = time.perf_counter() - t_start
+    all_passed = bool(cont["passed"]) and bool(rt["passed"])
+
+    if getattr(args, "json", False):
+        payload = {
+            "version": __version__,
+            "passed": all_passed,
+            "elapsed_seconds": round(elapsed, 4),
+            "continuity": cont,
+            "nlls_roundtrip": rt,
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if all_passed else 1
+
+    print(f"=== IVIMBench v{__version__} Clean-Room Self-Check ({elapsed:.2f}s) ===\n")
+    rows = [
+        "| Diagnostic Check | Target Limit | Observed Error | Tolerance | Status |",
+        "| :--- | :--- | ---: | ---: | :---: |",
+    ]
+    for fam, info in cont["checks"].items():
+        status = "PASS" if info["passed"] else "FAIL"
+        rows.append(
+            f"| Continuity: `{fam}` | {info['continuity_limit']} | "
+            f"{info['max_abs_residual']:.3e} | <= {info['tolerance']:.3e} | {status} |"
+        )
+    rt_status = "PASS" if rt["passed"] else "FAIL"
+    rows.append(
+        f"| Noiseless `biexp` NLLS Round-Trip (`n={rt['n_voxels']}`) | "
+        f"max rel error (D, D*, f) | {rt['max_rel_error']:.3e} | "
+        f"<= {rt['tolerance']:.3e} | {rt_status} |"
+    )
+    print("\n".join(rows))
+    overall_label = "PASSED" if all_passed else "FAILED"
+    print(f"\nOverall Self-Check Status: {overall_label}")
+    return 0 if all_passed else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``ivimbench`` top-level CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -239,7 +296,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_demo.add_argument("--json", action="store_true", help="Emit structured JSON instead of tables.")
     p_demo.set_defaults(func=_cmd_demo)
 
-    # 2. ivimbench benchmark
+    # 2. ivimbench selfcheck
+    p_self = sub.add_parser(
+        "selfcheck",
+        help="Verify forward-signal continuity limits and noiseless bi-exponential NLLS round-trip recovery.",
+    )
+    p_self.add_argument(
+        "--n-voxels",
+        type=int,
+        default=2000,
+        help="Cohort size for continuity-limit verification (default: 2000).",
+    )
+    p_self.add_argument(
+        "--roundtrip-voxels",
+        type=int,
+        default=60,
+        help="Cohort size for noiseless NLLS round-trip recovery (default: 60).",
+    )
+    p_self.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_self.add_argument("--json", action="store_true", help="Emit structured JSON instead of table.")
+    p_self.set_defaults(func=_cmd_selfcheck)
+
+    # 3. ivimbench benchmark
     p_bench = sub.add_parser(
         "benchmark",
         help="Run multi-task benchmark across protocols, forward families, and SNR regimes.",

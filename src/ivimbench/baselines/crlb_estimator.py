@@ -11,17 +11,97 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal
 
 import numpy as np
 from scipy import stats
 
 from ..acquisition.crlb import compute_crlb
-from ..metrics.coverage import DEFAULT_QUANTILE_LEVELS
+from ..metrics.coverage import (
+    DEFAULT_QUANTILE_LEVELS,
+    DEFAULT_RAILED_SD_FLOOR,
+    SDConvention,
+    apply_sd_convention,
+    normalize_sd_convention,
+)
 from ..metrics.railing import DEFAULT_PARAM_BOUNDS, DEFAULT_RAIL_TOL
 from ..protocols import AcquisitionProtocol, resolve_bvalues
 from .segmented import SegmentedEstimator
 
-__all__ = ["CRLBFitResult", "CRLBNormalEstimator", "CRLBEstimator"]
+__all__ = [
+    "CRLBFitResult",
+    "CRLBNormalEstimator",
+    "CRLBEstimator",
+    "crlb_normal_intervals",
+]
+
+
+def crlb_normal_intervals(
+    bvalues: str | AcquisitionProtocol | Sequence[float] | np.ndarray,
+    params_fit: np.ndarray,
+    *,
+    snr: float | Sequence[float] | np.ndarray = 30.0,
+    alpha: float = 0.10,
+    sd_convention: Literal["honest_crlb", "floored_railed"] | str = "honest_crlb",
+    bounds: Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
+    nex: Sequence[float] | np.ndarray | None = None,
+    s0: float | np.ndarray = 1.0,
+    include_s0: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build central ``(1 - alpha)`` CRLB normal-approximation intervals at ``params_fit``.
+
+    Parameters
+    ----------
+    bvalues : str, AcquisitionProtocol, or sequence of float
+        Diffusion weighting schedule in ``s/mm^2``.
+    params_fit : (n, 3) ndarray
+        Fitted IVIM parameters ``(D, Dstar, f)`` in physical units.
+    snr : float or sequence of float, default=30.0
+        Baseline ``b = 0`` signal-to-noise ratio.
+    alpha : float, default=0.10
+        Central interval miscoverage rate (``0.10`` -> 90% nominal coverage).
+    sd_convention : {"honest_crlb", "floored_railed"}, default="honest_crlb"
+        - ``"honest_crlb"`` (default): Full Fisher/CRLB standard deviations at
+          ``params_fit``, yielding honest marginal coverage with under-coverage
+          localized conditionally to the high-``D*`` tercile.
+        - ``"floored_railed"``: Collapses boundary-railed voxel SDs to
+          ``railed_sd_floor`` to reproduce legacy railed-voxel under-coverage.
+    """
+    conv = normalize_sd_convention(sd_convention)
+    b_arr, _ = resolve_bvalues(bvalues)
+    pt = np.atleast_2d(np.asarray(params_fit, dtype=np.float64))
+    active = dict(DEFAULT_PARAM_BOUNDS)
+    if bounds is not None:
+        active.update(bounds)
+
+    use_s0 = bool(include_s0) and (b_arr.size >= 4)
+    snr_val: float | np.ndarray = (
+        float(snr) if isinstance(snr, (int, float)) else np.asarray(snr, dtype=np.float64)
+    )
+    crlb_res = compute_crlb(b_arr, pt, snr=snr_val, nex=nex, s0=s0, include_s0=use_s0)
+    spans = np.array(
+        [
+            active["D"][1] - active["D"][0],
+            active["Dstar"][1] - active["Dstar"][0],
+            active["f"][1] - active["f"][0],
+        ],
+        dtype=np.float64,
+    )
+    raw_std = np.atleast_2d(crlb_res.std)
+    sigma = np.where(np.isfinite(raw_std), raw_std, spans[None, :])
+    sigma = np.maximum(sigma, 1e-8)
+    sigma = apply_sd_convention(
+        sigma,
+        sd_convention=conv,
+        point_pred=pt,
+        bounds=active,
+        rail_tol=rail_tol,
+        railed_sd_floor=railed_sd_floor,
+    )
+    z = float(stats.norm.ppf(1.0 - 0.5 * float(alpha)))
+    return pt - z * sigma, pt + z * sigma
 
 
 @dataclass
@@ -55,6 +135,15 @@ class CRLBNormalEstimator:
         when ``n_b >= 4``.
     n_lm_iter : int, default=20
         Number of vectorized simultaneous Levenberg–Marquardt refinement steps.
+    sd_convention : {"honest_crlb", "floored_railed"}, default="honest_crlb"
+        Dual-SD convention on boundary-railed fits:
+        - ``"honest_crlb"`` (default): Unclipped Fisher/CRLB standard errors at
+          fitted parameters (domain-bounded only on singular entries).
+        - ``"floored_railed"``: Assigns collapsed SD floor (``railed_sd_floor``)
+          to boundary-railed voxels, reproducing legacy marginal under-coverage.
+    railed_sd_floor : float, default=3.0e-3
+        Collapsed SD floor (``mm^2/s``) applied to railed ``D*`` voxels when
+        ``sd_convention="floored_railed"``.
     rail_tol : float, default=1e-2
         Relative tolerance for boundary-railing diagnostics.
     """
@@ -65,6 +154,8 @@ class CRLBNormalEstimator:
     nex: Sequence[float] | np.ndarray | None = None
     include_s0: bool = True
     n_lm_iter: int = 20
+    sd_convention: SDConvention | str = "honest_crlb"
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR
     rail_tol: float = DEFAULT_RAIL_TOL
     bvalues: np.ndarray = field(init=False)
 
@@ -74,6 +165,7 @@ class CRLBNormalEstimator:
         if self.bounds is not None:
             active.update(self.bounds)
         self._bounds = active
+        self.sd_convention = normalize_sd_convention(self.sd_convention)
 
     def fit(
         self,
@@ -84,8 +176,18 @@ class CRLBNormalEstimator:
         _ = (signals, params)
         return self
 
-    def solve(self, signals: np.ndarray) -> CRLBFitResult:
+    def solve(
+        self,
+        signals: np.ndarray,
+        *,
+        sd_convention: SDConvention | str | None = None,
+    ) -> CRLBFitResult:
         """Fit ``(S0, D, Dstar, f)`` and plug-in analytical CRLB standard errors."""
+        conv = (
+            normalize_sd_convention(self.sd_convention)
+            if sd_convention is None
+            else normalize_sd_convention(sd_convention)
+        )
         sig = np.atleast_2d(np.asarray(signals, dtype=np.float64))
         b = self.bvalues
         if sig.shape[1] != b.size:
@@ -200,6 +302,16 @@ class CRLBNormalEstimator:
             (hi3[None, :] - params_fit) <= self.rail_tol * spans[None, :]
         )
 
+        if conv == "floored_railed":
+            sigma_crlb = apply_sd_convention(
+                sigma_crlb,
+                sd_convention="floored_railed",
+                railed_mask=railed,
+                bounds=self._bounds,
+                rail_tol=self.rail_tol,
+                railed_sd_floor=float(self.railed_sd_floor),
+            )
+
         return CRLBFitResult(
             params=params_fit,
             s0=s0_fit,
@@ -218,9 +330,11 @@ class CRLBNormalEstimator:
         self,
         signals: np.ndarray,
         alpha: float = 0.10,
+        *,
+        sd_convention: SDConvention | str | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return central ``(1 - alpha)`` analytical CRLB normal-approximation intervals."""
-        fit = self.solve(signals)
+        fit = self.solve(signals, sd_convention=sd_convention)
         z = float(stats.norm.ppf(1.0 - 0.5 * float(alpha)))
         return fit.params - z * fit.sigma_crlb, fit.params + z * fit.sigma_crlb
 
@@ -228,12 +342,14 @@ class CRLBNormalEstimator:
         self,
         signals: np.ndarray,
         q_levels: Sequence[float] | np.ndarray = DEFAULT_QUANTILE_LEVELS,
+        *,
+        sd_convention: SDConvention | str | None = None,
     ) -> np.ndarray:
         """Return ``(n, 3, n_levels)`` analytical CRLB normal-approximation quantiles."""
         levels = np.asarray(q_levels, dtype=np.float64)
         if np.any((levels <= 0.0) | (levels >= 1.0)):
             raise ValueError("`q_levels` must lie strictly in (0, 1).")
-        fit = self.solve(signals)
+        fit = self.solve(signals, sd_convention=sd_convention)
         z = stats.norm.ppf(levels)
         return fit.params[:, :, None] + fit.sigma_crlb[:, :, None] * z[None, None, :]
 

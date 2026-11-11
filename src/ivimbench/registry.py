@@ -25,8 +25,10 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 from scipy import stats
 
-from .baselines import CRLBNormalEstimator, NLLSEstimator, SegmentedEstimator
-from .metrics.coverage import DEFAULT_QUANTILE_LEVELS, central_interval
+from .baselines.crlb_estimator import CRLBNormalEstimator
+from .baselines.nlls import NLLSEstimator
+from .baselines.segmented import SegmentedEstimator
+from .metrics.coverage import DEFAULT_QUANTILE_LEVELS, SDConvention, central_interval
 from .metrics.railing import DEFAULT_PARAM_BOUNDS, DEFAULT_RAIL_TOL, classify_railing
 from .phantoms.synthetic import PARAM_NAMES
 from .protocols import resolve_bvalues
@@ -388,6 +390,7 @@ _ESTIMATOR_ALIASES: dict[str, str] = {
     "simultaneous_nlls": "nlls",
     "crlb_normal": "crlb",
     "analytical_crlb": "crlb",
+    "maf_posterior": "maf",
 }
 
 
@@ -528,7 +531,14 @@ def run_estimator(
         std_hat: np.ndarray | None = None
 
         if hasattr(instance, "solve"):
-            solved = instance.solve(sig_2d)
+            solve_kw: dict[str, Any] = {}
+            if "sd_convention" in kwargs:
+                try:
+                    if "sd_convention" in inspect.signature(instance.solve).parameters:
+                        solve_kw["sd_convention"] = kwargs["sd_convention"]
+                except (TypeError, ValueError):
+                    pass
+            solved = instance.solve(sig_2d, **solve_kw)
             pt = np.asarray(solved.params, dtype=np.float64)
             s0_hat = getattr(solved, "s0", None)
             railed = getattr(solved, "railed", None)
@@ -651,7 +661,7 @@ def _builtin_nlls_estimator(
     *,
     alpha: float = 0.10,
     bounds: Mapping[str, tuple[float, float]] | None = None,
-    sd_convention: str = "honest",
+    sd_convention: SDConvention | str = "honest_crlb",
     max_nfev: int = 250,
 ) -> dict[str, Any]:
     est = NLLSEstimator(
@@ -689,12 +699,14 @@ def _builtin_crlb_estimator(
     snr: float | None = None,
     nex: Sequence[float] | np.ndarray | None = None,
     bounds: Mapping[str, tuple[float, float]] | None = None,
+    sd_convention: SDConvention | str = "honest_crlb",
 ) -> dict[str, Any]:
     est = CRLBNormalEstimator(
         protocol=bvalues,
         bounds=bounds,
         snr=snr,
         nex=nex,
+        sd_convention=sd_convention,
     )
     solved = est.solve(signals)
     z = float(stats.norm.ppf(1.0 - 0.5 * float(alpha)))
@@ -710,3 +722,7 @@ def _builtin_crlb_estimator(
         "railed": solved.railed,
         "snr_hat": solved.snr_hat,
     }
+
+
+# Trigger conditional @register_estimator("maf") when optional ivimbench[torch] is installed
+from .baselines import maf as _maf  # noqa: E402, F401

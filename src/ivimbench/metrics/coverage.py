@@ -14,18 +14,25 @@ and Datum (``datum.ci``):
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from scipy import stats
 
+from .railing import DEFAULT_PARAM_BOUNDS, DEFAULT_RAIL_TOL
+
 __all__ = [
+    "SDConvention",
+    "DEFAULT_RAILED_SD_FLOOR",
     "DEFAULT_QUANTILE_LEVELS",
     "DEFAULT_NOMINAL_LEVELS",
     "TERCILE_LABELS",
     "StratumCoverage",
+    "normalize_sd_convention",
+    "apply_sd_convention",
+    "apply_interval_sd_convention",
     "pinball_loss",
     "interval_score",
     "empirical_coverage",
@@ -36,6 +43,7 @@ __all__ = [
     "central_interval_calibration_curve",
     "gaussian_calibration_curve",
     "central_interval",
+    "score_quantiles",
     "tercile_groups",
     "snr_groups",
     "group_conditional_coverage",
@@ -49,11 +57,154 @@ __all__ = [
     "MondrianConformalQuantile",
 ]
 
+SDConvention = Literal["honest_crlb", "floored_railed"]
+DEFAULT_RAILED_SD_FLOOR: float = 3.0e-3
+
 DEFAULT_QUANTILE_LEVELS: tuple[float, ...] = (
     0.025, 0.05, 0.10, 0.16, 0.25, 0.50, 0.75, 0.84, 0.90, 0.95, 0.975
 )
 DEFAULT_NOMINAL_LEVELS: tuple[float, ...] = (0.50, 0.68, 0.80, 0.90, 0.95)
 TERCILE_LABELS: dict[int, str] = {0: "low", 1: "mid", 2: "high"}
+
+
+def normalize_sd_convention(sd_convention: str) -> SDConvention:
+    """Normalize ``sd_convention`` (including legacy ``'honest'``/``'floored'`` aliases)."""
+    cleaned = sd_convention.strip().lower()
+    if cleaned in ("honest_crlb", "honest"):
+        return "honest_crlb"
+    if cleaned in ("floored_railed", "floored"):
+        return "floored_railed"
+    raise ValueError(
+        f"`sd_convention` must be 'honest_crlb' or 'floored_railed' "
+        f"(got {sd_convention!r})."
+    )
+
+
+def _infer_railed_mask(
+    point_arr: np.ndarray,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None,
+    rail_tol: float,
+) -> np.ndarray:
+    """Infer boolean boundary-railing mask for 1D ``(n,)`` or 2D ``(n, 3)`` estimates."""
+    pt = np.asarray(point_arr, dtype=np.float64)
+    tol = float(rail_tol)
+    if pt.ndim == 1:
+        b_pair = bounds if isinstance(bounds, tuple) else DEFAULT_PARAM_BOUNDS["Dstar"]
+        lo_b, hi_b = float(b_pair[0]), float(b_pair[1])
+        span = max(hi_b - lo_b, 1e-15)
+        return ((pt - lo_b) <= tol * span) | ((hi_b - pt) <= tol * span)
+
+    if pt.ndim == 2 and pt.shape[1] == 3:
+        b_map = dict(DEFAULT_PARAM_BOUNDS)
+        if isinstance(bounds, Mapping):
+            b_map.update(bounds)
+        names = ("D", "Dstar", "f")
+        lo3 = np.array([b_map[p][0] for p in names], dtype=np.float64)
+        hi3 = np.array([b_map[p][1] for p in names], dtype=np.float64)
+        spans3 = np.maximum(hi3 - lo3, 1e-15)
+        return ((pt - lo3[None, :]) <= tol * spans3[None, :]) | (
+            (hi3[None, :] - pt) <= tol * spans3[None, :]
+        )
+    raise ValueError(f"Unsupported `point_pred` shape {pt.shape} for railing inference.")
+
+
+def apply_sd_convention(
+    std_pred: np.ndarray | Sequence[float],
+    *,
+    sd_convention: SDConvention | str = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
+) -> np.ndarray:
+    """Apply the Caliper dual-SD convention to per-voxel standard deviations.
+
+    - ``"honest_crlb"`` (default): Preserves full Fisher/CRLB standard deviations.
+    - ``"floored_railed"``: Collapses boundary-railed voxel SDs to ``railed_sd_floor``
+      (reproducing the legacy over-confident railed-voxel under-coverage artifact).
+    """
+    conv = normalize_sd_convention(sd_convention)
+    sd = np.asarray(std_pred, dtype=np.float64).copy()
+    if conv == "honest_crlb":
+        return sd
+
+    if railed_mask is not None:
+        mask = np.asarray(railed_mask, dtype=bool)
+    elif point_pred is not None:
+        mask = _infer_railed_mask(np.asarray(point_pred, dtype=np.float64), bounds, rail_tol)
+    else:
+        return sd
+
+    if sd.ndim == 1:
+        sd[mask.ravel()] = float(railed_sd_floor)
+        return sd
+
+    if sd.ndim == 2 and sd.shape[1] == 3:
+        b_map = dict(DEFAULT_PARAM_BOUNDS)
+        if isinstance(bounds, Mapping):
+            b_map.update(bounds)
+        spans3 = np.array(
+            [
+                b_map["D"][1] - b_map["D"][0],
+                b_map["Dstar"][1] - b_map["Dstar"][0],
+                b_map["f"][1] - b_map["f"][0],
+            ],
+            dtype=np.float64,
+        )
+        floors3 = np.array([0.015 * spans3[0], float(railed_sd_floor), 0.015 * spans3[2]])
+        if mask.ndim == 1:
+            sd[mask, 1] = floors3[1]
+        else:
+            for j in range(3):
+                sd[mask[:, j], j] = np.minimum(sd[mask[:, j], j], floors3[j])
+                if j == 1:
+                    sd[mask[:, 1], 1] = floors3[1]
+        return sd
+
+    sd[mask] = float(railed_sd_floor)
+    return sd
+
+
+def apply_interval_sd_convention(
+    lower: np.ndarray | Sequence[float],
+    upper: np.ndarray | Sequence[float],
+    *,
+    sd_convention: SDConvention | str = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    alpha: float = 0.10,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Adjust ``(lower, upper)`` intervals when ``sd_convention="floored_railed"``."""
+    conv = normalize_sd_convention(sd_convention)
+    lo = np.asarray(lower, dtype=np.float64).copy()
+    hi = np.asarray(upper, dtype=np.float64).copy()
+    if conv == "honest_crlb":
+        return lo, hi
+
+    center = (
+        0.5 * (lo + hi)
+        if point_pred is None
+        else np.asarray(point_pred, dtype=np.float64)
+    )
+    if railed_mask is None and point_pred is None and bounds is None:
+        return lo, hi
+
+    z = max(float(stats.norm.ppf(1.0 - 0.5 * float(alpha))), 1e-12)
+    implied_sd = np.maximum(0.5 * (hi - lo) / z, 1e-15)
+    adj_sd = apply_sd_convention(
+        implied_sd,
+        sd_convention=conv,
+        point_pred=center,
+        railed_mask=railed_mask,
+        bounds=bounds,
+        rail_tol=rail_tol,
+        railed_sd_floor=railed_sd_floor,
+    )
+    return center - z * adj_sd, center + z * adj_sd
 
 
 @dataclass(frozen=True)
@@ -123,11 +274,28 @@ def empirical_coverage(
     y_true: np.ndarray | Sequence[float],
     lower: np.ndarray | Sequence[float],
     upper: np.ndarray | Sequence[float],
+    *,
+    sd_convention: SDConvention = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    alpha: float = 0.10,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
 ) -> float:
     """Fraction of ``y_true`` falling inside ``[lower, upper]`` (inclusive)."""
     y = np.asarray(y_true, dtype=np.float64)
-    lo = np.asarray(lower, dtype=np.float64)
-    hi = np.asarray(upper, dtype=np.float64)
+    lo, hi = apply_interval_sd_convention(
+        lower,
+        upper,
+        sd_convention=sd_convention,
+        point_pred=point_pred,
+        railed_mask=railed_mask,
+        bounds=bounds,
+        rail_tol=rail_tol,
+        alpha=alpha,
+        railed_sd_floor=railed_sd_floor,
+    )
     if y.shape != lo.shape or y.shape != hi.shape:
         raise ValueError(
             f"Shape mismatch in empirical_coverage: y_true={y.shape}, "
@@ -143,9 +311,30 @@ def coverage_gap(
     lower: np.ndarray | Sequence[float],
     upper: np.ndarray | Sequence[float],
     nominal: float = 0.90,
+    *,
+    sd_convention: SDConvention = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
 ) -> float:
     """Signed marginal coverage gap ``empirical_coverage - nominal``."""
-    return empirical_coverage(y_true, lower, upper) - float(nominal)
+    return (
+        empirical_coverage(
+            y_true,
+            lower,
+            upper,
+            sd_convention=sd_convention,
+            point_pred=point_pred,
+            railed_mask=railed_mask,
+            bounds=bounds,
+            rail_tol=rail_tol,
+            alpha=1.0 - float(nominal),
+            railed_sd_floor=railed_sd_floor,
+        )
+        - float(nominal)
+    )
 
 
 def quantile_calibration(
@@ -244,11 +433,27 @@ def gaussian_calibration_curve(
     mean_pred: np.ndarray | Sequence[float],
     std_pred: np.ndarray | Sequence[float],
     nominal_levels: Sequence[float] | np.ndarray = DEFAULT_NOMINAL_LEVELS,
+    *,
+    sd_convention: SDConvention = "honest_crlb",
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
 ) -> dict[str, np.ndarray | float]:
     """Evaluate symmetric Gaussian ``mean +/- z * std`` interval coverage across nominal levels."""
+    normalize_sd_convention(sd_convention)
     y = np.asarray(y_true, dtype=np.float64)
     mu = np.asarray(mean_pred, dtype=np.float64)
-    sd = np.maximum(np.asarray(std_pred, dtype=np.float64), 1e-15)
+    sd_adj = apply_sd_convention(
+        std_pred,
+        sd_convention=sd_convention,
+        point_pred=mu,
+        railed_mask=railed_mask,
+        bounds=bounds,
+        rail_tol=rail_tol,
+        railed_sd_floor=railed_sd_floor,
+    )
+    sd = np.maximum(sd_adj, 1e-15)
     nominals = np.asarray(nominal_levels, dtype=np.float64)
     z_err = np.abs(y - mu) / sd
     emp = np.array(
@@ -261,6 +466,65 @@ def gaussian_calibration_curve(
         "gap": emp - nominals,
         "ece": float(np.mean(np.abs(emp - nominals))),
     }
+
+
+def score_quantiles(
+    y_true: np.ndarray,
+    q_pred: np.ndarray,
+    q_levels: Sequence[float] | np.ndarray = DEFAULT_QUANTILE_LEVELS,
+    *,
+    param_names: Sequence[str] = ("D", "Dstar", "f"),
+    alpha: float = 0.10,
+    sd_convention: SDConvention = "honest_crlb",
+    point_pred: np.ndarray | None = None,
+    railed_mask: np.ndarray | None = None,
+    bounds: Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
+) -> dict[str, dict[str, Any]]:
+    """Score ``(n, P, L)`` quantile predictions against ``y_true`` (Caliper/Lattice contract)."""
+    truth = np.asarray(y_true, dtype=np.float64)
+    qp = np.asarray(q_pred, dtype=np.float64)
+    levels = np.asarray(q_levels, dtype=np.float64)
+    if truth.ndim != 2 or qp.shape != (truth.shape[0], truth.shape[1], levels.size):
+        raise ValueError(
+            f"Expected y_true=(n, P) and q_pred=(n, P, L); got {truth.shape} and {qp.shape}."
+        )
+    conv = normalize_sd_convention(sd_convention)
+    lo_mat, hi_mat = central_interval(qp, levels, alpha=alpha)
+    mid_idx = int(np.argmin(np.abs(levels - 0.50)))
+    pt_mat = qp[:, :, mid_idx] if point_pred is None else np.asarray(point_pred, dtype=np.float64)
+    lo_adj, hi_adj = apply_interval_sd_convention(
+        lo_mat,
+        hi_mat,
+        sd_convention=conv,
+        point_pred=pt_mat,
+        railed_mask=railed_mask,
+        bounds=bounds if bounds is not None else DEFAULT_PARAM_BOUNDS,
+        rail_tol=rail_tol,
+        alpha=alpha,
+        railed_sd_floor=railed_sd_floor,
+    )
+    nominal = 1.0 - float(alpha)
+    dstar_col = 1 if truth.shape[1] > 1 else 0
+    out: dict[str, dict[str, Any]] = {}
+    for j, pname in enumerate(param_names):
+        yj = truth[:, j]
+        loj, hij = lo_adj[:, j], hi_adj[:, j]
+        cov = empirical_coverage(yj, loj, hij)
+        terc = tercile_stratified_coverage(
+            yj, loj, hij, conditioning=truth[:, dstar_col], nominal=nominal
+        )
+        out[str(pname)] = {
+            "marginal_coverage": cov,
+            "marginal_coverage_gap": cov - nominal,
+            "ece": ece_quantile(yj, qp[:, j, :], levels),
+            "mean_width": float(np.mean(hij - loj)),
+            "interval_score": float(np.mean(interval_score(loj, hij, yj, alpha=alpha))),
+            "terciles": {k: v.to_dict() for k, v in terc.items()},
+            "sd_convention": conv,
+        }
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -314,11 +578,27 @@ def group_conditional_coverage(
     groups: np.ndarray | Sequence[int],
     nominal: float = 0.90,
     group_labels: dict[int, str] | None = None,
+    *,
+    sd_convention: SDConvention = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
 ) -> dict[int, StratumCoverage]:
     """Compute empirical coverage, gap, and mean width within each integer group."""
     y = np.asarray(y_true, dtype=np.float64)
-    lo = np.asarray(lower, dtype=np.float64)
-    hi = np.asarray(upper, dtype=np.float64)
+    lo, hi = apply_interval_sd_convention(
+        lower,
+        upper,
+        sd_convention=sd_convention,
+        point_pred=point_pred,
+        railed_mask=railed_mask,
+        bounds=bounds,
+        rail_tol=rail_tol,
+        alpha=1.0 - float(nominal),
+        railed_sd_floor=railed_sd_floor,
+    )
     grp = np.asarray(groups)
     if not (y.shape == lo.shape == hi.shape == grp.shape):
         raise ValueError(
@@ -348,13 +628,31 @@ def tercile_stratified_coverage(
     upper: np.ndarray | Sequence[float],
     conditioning: np.ndarray | Sequence[float] | None = None,
     nominal: float = 0.90,
+    *,
+    sd_convention: SDConvention = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
 ) -> dict[str, StratumCoverage]:
     """Compute coverage stratified by low/mid/high terciles of ``conditioning`` (default ``y_true``)."""
     y = np.asarray(y_true, dtype=np.float64)
     cond = y if conditioning is None else np.asarray(conditioning, dtype=np.float64)
     grp = tercile_groups(cond)
     by_int = group_conditional_coverage(
-        y, lower, upper, grp, nominal=nominal, group_labels=TERCILE_LABELS
+        y,
+        lower,
+        upper,
+        grp,
+        nominal=nominal,
+        group_labels=TERCILE_LABELS,
+        sd_convention=sd_convention,
+        point_pred=point_pred,
+        railed_mask=railed_mask,
+        bounds=bounds,
+        rail_tol=rail_tol,
+        railed_sd_floor=railed_sd_floor,
     )
     return {TERCILE_LABELS.get(k, f"g{k}"): v for k, v in by_int.items()}
 
@@ -366,11 +664,29 @@ def snr_stratified_coverage(
     snr: np.ndarray | Sequence[float],
     nominal: float = 0.90,
     n_bins: int = 3,
+    *,
+    sd_convention: SDConvention = "honest_crlb",
+    point_pred: np.ndarray | Sequence[float] | None = None,
+    railed_mask: np.ndarray | Sequence[bool] | None = None,
+    bounds: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    rail_tol: float = DEFAULT_RAIL_TOL,
+    railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
 ) -> dict[str, StratumCoverage]:
     """Compute coverage stratified across per-voxel SNR regimes."""
     grp, labels = snr_groups(snr, n_bins=n_bins)
     by_int = group_conditional_coverage(
-        y_true, lower, upper, grp, nominal=nominal, group_labels=labels
+        y_true,
+        lower,
+        upper,
+        grp,
+        nominal=nominal,
+        group_labels=labels,
+        sd_convention=sd_convention,
+        point_pred=point_pred,
+        railed_mask=railed_mask,
+        bounds=bounds,
+        rail_tol=rail_tol,
+        railed_sd_floor=railed_sd_floor,
     )
     return {labels[k]: v for k, v in by_int.items()}
 

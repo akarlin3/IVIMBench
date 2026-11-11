@@ -17,6 +17,14 @@ from .noise import (
     ncchi_analytical_second_moment,
     rician_analytical_mean,
 )
+from .selfcheck import (
+    ALTERNATIVE_CONTINUITY_FAMILIES,
+    DEFAULT_SELFCHECK_BOUNDS,
+    clean_roundtrip_error,
+    fit_biexp_nlls,
+    run_nlls_roundtrip_selfcheck,
+    verify_continuity_limits,
+)
 from .synthetic import (
     CONTINUITY_EXTRA,
     DEFAULT_EXTRA,
@@ -24,6 +32,7 @@ from .synthetic import (
     FAMILIES,
     ORGAN_PRIORS,
     PARAM_NAMES,
+    Cohort,
     OrganPrior,
     SyntheticCohort,
     continuity_residual,
@@ -35,7 +44,9 @@ from .synthetic import (
     ivim_kurtosis,
     ivim_stretched,
     ivim_triexp,
+    make_cohort,
     sample_organ_params,
+    to_scorer_inputs,
 )
 
 __all__ = [
@@ -46,6 +57,8 @@ __all__ = [
     "DEFAULT_EXTRA",
     "CONTINUITY_EXTRA",
     "FAMILIES",
+    "ALTERNATIVE_CONTINUITY_FAMILIES",
+    "DEFAULT_SELFCHECK_BOUNDS",
     "get_organ_prior",
     "sample_organ_params",
     "ivim_biexp",
@@ -55,8 +68,15 @@ __all__ = [
     "ivim_stretched",
     "ivim_triexp",
     "SyntheticCohort",
+    "Cohort",
+    "to_scorer_inputs",
+    "make_cohort",
     "generate_cohort",
     "continuity_residual",
+    "fit_biexp_nlls",
+    "clean_roundtrip_error",
+    "verify_continuity_limits",
+    "run_nlls_roundtrip_selfcheck",
     "LesionSpec",
     "OrganDROPreset",
     "ORGAN_DRO_PRESETS",

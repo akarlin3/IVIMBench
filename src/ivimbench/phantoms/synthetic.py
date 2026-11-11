@@ -42,8 +42,15 @@ __all__ = [
     "ivim_triexp",
     "sample_organ_params",
     "SyntheticCohort",
+    "Cohort",
+    "to_scorer_inputs",
+    "make_cohort",
     "generate_cohort",
     "continuity_residual",
+    "fit_biexp_nlls",
+    "clean_roundtrip_error",
+    "verify_continuity_limits",
+    "run_nlls_roundtrip_selfcheck",
 ]
 
 PARAM_NAMES: tuple[str, str, str] = ("D", "Dstar", "f")
@@ -470,6 +477,8 @@ class SyntheticCohort:
       ``signals`` has shape ``(n_voxels, n_b)`` and ``ground_truth`` is the
       ``(n_voxels, 3)`` array ordered ``(D, Dstar, f)``.
     - Dictionary-style lookup: ``cohort["signals"]``, ``cohort["Dstar"]``, etc.
+    - Scorer packaging: ``cohort.to_scorer_inputs(q_pred, q_levels)`` for drop-in
+      parity with ``Lattice`` and ``Caliper``.
     """
 
     signals: np.ndarray
@@ -485,6 +494,8 @@ class SyntheticCohort:
     prior: str = "realistic"
     seed: int = DEFAULT_SEED
     param_names: tuple[str, ...] = PARAM_NAMES
+    extra: np.ndarray | None = None
+    extra_names: tuple[str, ...] = ()
 
     def __len__(self) -> int:
         return int(self.params.shape[0])
@@ -493,6 +504,11 @@ class SyntheticCohort:
         """Yield ``(signals, params)`` for convenient one-line unpacking."""
         yield self.signals
         yield self.params
+
+    @property
+    def noise(self) -> str:
+        """Alias for :attr:`noise_type` matching ``Lattice``'s ``Cohort.noise``."""
+        return self.noise_type
 
     @property
     def D(self) -> np.ndarray:
@@ -542,11 +558,41 @@ class SyntheticCohort:
             "snr": self.snr,
             "organ": self.organ,
             "protocol": self.protocol,
+            "family": self.family,
+            "noise": self.noise_type,
+            "noise_type": self.noise_type,
+            "extra": self.extra,
+            "extra_names": self.extra_names,
             "seed": self.seed,
         }
         if key in mapping:
             return mapping[key]
         raise KeyError(f"Unknown key {key!r} in SyntheticCohort.")
+
+    def to_scorer_inputs(
+        self,
+        q_pred: np.ndarray | None = None,
+        q_levels: Sequence[float] | np.ndarray = (
+            0.025, 0.05, 0.10, 0.16, 0.25, 0.50, 0.75, 0.84, 0.90, 0.95, 0.975
+        ),
+    ) -> dict[str, Any]:
+        """Package ground truth (and optional quantile predictions) for calibration scorers.
+
+        When ``q_pred`` is supplied, returns
+        ``{"y_true": self.params, "q_pred": q_pred, "q_levels": q_levels, "param_names": list(self.param_names)}``,
+        matching ``lattice.evaluate.to_scorer_inputs`` and accepted directly by
+        :func:`~ivimbench.metrics.coverage.score_quantiles` and
+        :meth:`~ivimbench.evaluate.BenchmarkSuite.evaluate`. When ``q_pred`` is
+        omitted, returns ground-truth context ``{"y_true", "bvalues", "snr", "param_names"}``.
+        """
+        if q_pred is None:
+            return {
+                "y_true": self.params,
+                "bvalues": self.bvalues,
+                "snr": self.snr,
+                "param_names": list(self.param_names),
+            }
+        return to_scorer_inputs(self, q_pred, q_levels=q_levels)
 
     def manifest(self) -> dict[str, Any]:
         """Return a JSON-serializable reproducibility manifest."""
@@ -567,12 +613,18 @@ class SyntheticCohort:
             "snr": snr_meta,
             "seed": int(self.seed),
             "param_names": list(self.param_names),
+            "extra_names": list(self.extra_names),
         }
 
     def save(self, path: str | Path) -> Path:
         """Save arrays to ``<path>.npz`` and provenance manifest to ``<path>.json``."""
         target = Path(path)
         npz_path = target.with_suffix(".npz")
+        extra_arr = (
+            self.extra
+            if self.extra is not None
+            else np.empty((len(self), 0), dtype=np.float64)
+        )
         np.savez_compressed(
             npz_path,
             signals=self.signals,
@@ -580,9 +632,37 @@ class SyntheticCohort:
             params=self.params,
             bvalues=self.bvalues,
             snr=np.asarray(self.snr, dtype=np.float64),
+            extra=extra_arr,
         )
         target.with_suffix(".json").write_text(json.dumps(self.manifest(), indent=2))
         return npz_path
+
+
+Cohort = SyntheticCohort
+
+
+def to_scorer_inputs(
+    cohort: SyntheticCohort,
+    q_pred: np.ndarray,
+    q_levels: Sequence[float] | np.ndarray = (
+        0.025, 0.05, 0.10, 0.16, 0.25, 0.50, 0.75, 0.84, 0.90, 0.95, 0.975
+    ),
+) -> dict[str, Any]:
+    """Package a :class:`Cohort` + predicted quantiles for ``score_quantiles`` / ``BenchmarkSuite``."""
+    qp = np.asarray(q_pred, dtype=np.float64)
+    levels = np.asarray(q_levels, dtype=np.float64)
+    y_true = np.asarray(cohort.params, dtype=np.float64)
+    expected = (y_true.shape[0], y_true.shape[1], levels.size)
+    if qp.shape != expected:
+        raise ValueError(
+            f"q_pred shape {qp.shape} != expected {expected} (n, n_params, n_levels)."
+        )
+    return {
+        "y_true": y_true,
+        "q_pred": qp,
+        "q_levels": levels,
+        "param_names": list(cohort.param_names),
+    }
 
 
 def generate_cohort(
@@ -648,11 +728,12 @@ def generate_cohort(
 
     bvalues, protocol_name = resolve_bvalues(protocol)
     organ_spec = get_organ_prior(organ)
+    n_vox = int(n_voxels)
 
     rng_base = np.random.default_rng(int(seed) + _OFFSET_BASE)
     params = sample_organ_params(
         organ=organ_spec.organ,
-        n_voxels=int(n_voxels),
+        n_voxels=n_vox,
         prior=prior,
         seed=rng_base,
     )
@@ -661,16 +742,24 @@ def generate_cohort(
     if extra:
         extra_kw.update(extra)
 
+    extra_names = tuple(str(k) for k in FAMILIES[family]["extra"])
+    if extra_names:
+        extra_mat = np.column_stack(
+            [np.full(n_vox, float(extra_kw[k]), dtype=np.float64) for k in extra_names]
+        )
+    else:
+        extra_mat = np.empty((n_vox, 0), dtype=np.float64)
+
     signals_clean = _evaluate_family(family, bvalues, params, extra_kw, s0=float(s0))
 
     snr_in = np.asarray(snr, dtype=np.float64)
     if snr_in.ndim == 0:
         snr_effective: float | np.ndarray = float(snr_in)
-    elif snr_in.ndim == 1 and snr_in.size == int(n_voxels):
+    elif snr_in.ndim == 1 and snr_in.size == n_vox:
         snr_effective = snr_in
     elif snr_in.ndim == 1 and snr_in.size > 0:
         rng_extra = np.random.default_rng(int(seed) + _OFFSET_EXTRA)
-        snr_effective = snr_in[rng_extra.integers(0, snr_in.size, size=int(n_voxels))]
+        snr_effective = snr_in[rng_extra.integers(0, snr_in.size, size=n_vox)]
     else:
         raise ValueError(f"Invalid `snr` shape {snr_in.shape}.")
 
@@ -697,6 +786,34 @@ def generate_cohort(
         n_coils=int(n_coils),
         prior=prior,
         seed=int(seed),
+        extra=extra_mat,
+        extra_names=extra_names,
+    )
+
+
+def make_cohort(
+    family: str = "biexp",
+    n: int = 1000,
+    bvalues: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "lattice_22b",
+    snr: float = 30.0,
+    noise: str = "rician",
+    seed: int = DEFAULT_SEED,
+    *,
+    organ: str = "generic",
+    prior: str = "realistic",
+    extra: dict[str, float] | None = None,
+) -> Cohort:
+    """Drop-in ``Lattice``-style ``make_cohort`` wrapper around :func:`generate_cohort`."""
+    return generate_cohort(
+        protocol=bvalues,
+        organ=organ,
+        n_voxels=int(n),
+        snr=snr,
+        seed=int(seed),
+        noise_type=noise,
+        prior=prior,
+        family=family,
+        extra=extra,
     )
 
 
@@ -714,3 +831,11 @@ def continuity_residual(
     ref = _evaluate_family("biexp", bvalues, params, {})
     lim = _evaluate_family(family, bvalues, params, CONTINUITY_EXTRA[family])
     return float(np.max(np.abs(lim - ref)))
+
+
+from .selfcheck import (  # noqa: E402
+    clean_roundtrip_error,
+    fit_biexp_nlls,
+    run_nlls_roundtrip_selfcheck,
+    verify_continuity_limits,
+)

@@ -21,12 +21,17 @@ from .baselines import CRLBNormalEstimator, MLPEstimator, NLLSEstimator, Segment
 from .metrics.coverage import (
     DEFAULT_NOMINAL_LEVELS,
     DEFAULT_QUANTILE_LEVELS,
+    DEFAULT_RAILED_SD_FLOOR,
+    SDConvention,
+    apply_interval_sd_convention,
+    apply_sd_convention,
     bootstrap_coverage_ci,
     central_interval,
     ece_quantile,
     empirical_coverage,
     gaussian_calibration_curve,
     interval_score,
+    normalize_sd_convention,
     pinball_loss,
     snr_stratified_coverage,
     tercile_stratified_coverage,
@@ -182,6 +187,11 @@ class BenchmarkSuite:
         normalized widths. Defaults to :data:`DEFAULT_PARAM_BOUNDS`.
     rail_tol : float, default=1e-2
         Relative tolerance as a fraction of ``hi - lo`` for boundary railing.
+    sd_convention : {"honest_crlb", "floored_railed"}, default="honest_crlb"
+        Dual-SD convention applied to boundary-railed interval/SD predictions.
+    railed_sd_floor : float, default=3.0e-3
+        Collapsed SD floor (``mm^2/s``) applied when
+        ``sd_convention="floored_railed"``.
     n_boot : int, default=1000
         Number of bootstrap resamples for coverage and railing confidence intervals.
     seed : int, default=42
@@ -198,6 +208,8 @@ class BenchmarkSuite:
         alpha: float = 0.10,
         bounds: Mapping[str, tuple[float, float]] | None = None,
         rail_tol: float = DEFAULT_RAIL_TOL,
+        sd_convention: SDConvention | str = "honest_crlb",
+        railed_sd_floor: float = DEFAULT_RAILED_SD_FLOOR,
         n_boot: int = 1000,
         seed: int = DEFAULT_SEED,
         include_s0_in_crlb: bool = False,
@@ -213,6 +225,8 @@ class BenchmarkSuite:
             active_bounds.update(bounds)
         self.bounds = active_bounds
         self.rail_tol = float(rail_tol)
+        self.sd_convention = normalize_sd_convention(sd_convention)
+        self.railed_sd_floor = float(railed_sd_floor)
         self.n_boot = int(n_boot)
         self.seed = int(seed)
         self.include_s0_in_crlb = bool(include_s0_in_crlb)
@@ -261,29 +275,17 @@ class BenchmarkSuite:
         method: str = "model",
         bvalues: Sequence[float] | np.ndarray | None = None,
         snr: float | np.ndarray | None = None,
+        param_names: Sequence[str] | None = None,
+        sd_convention: SDConvention | str | None = None,
         as_dataframe: bool = False,
     ) -> BenchmarkReport | pd.DataFrame:
-        """Run all UQ calibration, sharpness/CRLB, and railing metrics on predictions.
-
-        Supports four flexible prediction formats:
-        1. ``point_pred`` + ``intervals=(lower, upper)`` (or ``lower=..., upper=...``),
-        2. ``point_pred`` + ``std_pred`` (symmetric Gaussian error bars),
-        3. ``q_pred`` ``(n, 3, L)`` + ``q_levels`` (quantile regression / posterior draws),
-        4. ``estimator`` object exposing ``predict_quantiles`` or ``predict_intervals``
-           (reads signals from ``signals`` or from ``y_true`` if ``y_true`` is a cohort/DRO).
-
-        Parameters
-        ----------
-        y_true : SyntheticCohort, DigitalReferenceObject, (n, 3) ndarray, or dict
-            Ground-truth IVIM parameters ``(D, Dstar, f)``.
-        as_dataframe : bool, default=False
-            If ``True``, returns the :class:`pandas.DataFrame` directly instead of
-            a :class:`BenchmarkReport`.
-
-        Returns
-        -------
-        BenchmarkReport or pandas.DataFrame
-        """
+        """Run all UQ calibration, sharpness/CRLB, and railing metrics on predictions."""
+        _ = param_names
+        conv = (
+            self.sd_convention
+            if sd_convention is None
+            else normalize_sd_convention(sd_convention)
+        )
         truth, b_arr, proto_label, snr_eff = self._resolve_context(y_true, bvalues, snr)
         n = truth.shape[0]
         levels_arr = np.asarray(q_levels, dtype=np.float64)
@@ -311,6 +313,7 @@ class BenchmarkSuite:
                     b_arr,
                     alpha=self.alpha,
                     bounds=self.bounds,
+                    sd_convention=conv,
                 )
                 point_pred = norm_out.point
                 lower, upper = norm_out.lower, norm_out.upper
@@ -379,6 +382,27 @@ class BenchmarkSuite:
             n_boot=self.n_boot,
             seed=self.seed,
         )
+
+        if conv == "floored_railed":
+            lo_mat, hi_mat = apply_interval_sd_convention(
+                lo_mat,
+                hi_mat,
+                sd_convention="floored_railed",
+                point_pred=pt_mat,
+                bounds=self.bounds,
+                rail_tol=self.rail_tol,
+                alpha=self.alpha,
+                railed_sd_floor=self.railed_sd_floor,
+            )
+            if std_mat is not None:
+                std_mat = apply_sd_convention(
+                    std_mat,
+                    sd_convention="floored_railed",
+                    point_pred=pt_mat,
+                    bounds=self.bounds,
+                    rail_tol=self.rail_tol,
+                    railed_sd_floor=self.railed_sd_floor,
+                )
 
         # 2. Sharpness & CRLB efficiency
         norm_widths = np.asarray(
