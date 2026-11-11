@@ -2,8 +2,10 @@
 
 **Standardized digital reference phantoms, clinical acquisition schedules, and uncertainty calibration benchmarks for quantitative IVIM MRI.**
 
+[![CI](https://github.com/akarlin3/IVIMBench/actions/workflows/ci.yml/badge.svg)](https://github.com/akarlin3/IVIMBench/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+[![Typed: PEP 561](https://img.shields.io/badge/typing-PEP%20561-informational.svg)](src/ivimbench/py.typed)
 [![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-green.svg)](pyproject.toml)
 
 `IVIMBench` consolidates synthetic phantom generation (`Lattice`), benchmark protocols and submission harnesses (`Datum`), and distribution-free uncertainty quantification (UQ) calibration metrics (`Caliper`) into a unified, lightweight Python evaluation suite for intravoxel incoherent motion (IVIM) diffusion MRI:
@@ -15,6 +17,17 @@ All parameters use canonical physical MRI units across the entire library: diffu
 ---
 
 ## Installation
+
+Install directly from GitHub:
+
+```bash
+pip install git+https://github.com/akarlin3/IVIMBench.git
+
+# With optional visualization dependencies (matplotlib, seaborn)
+pip install "ivimbench[vis] @ git+https://github.com/akarlin3/IVIMBench.git"
+```
+
+Or via PyPI:
 
 ```bash
 pip install ivimbench
