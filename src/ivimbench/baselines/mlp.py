@@ -9,8 +9,8 @@ log-likelihood (NLL) training with Adam.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 import numpy as np
 from scipy import stats
@@ -57,7 +57,7 @@ class MLPEstimator:
         Deterministic RNG seed for weight initialization and mini-batch shuffling.
     """
 
-    protocol: str | AcquisitionProtocol | Sequence[float] = "osipi"
+    protocol: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "osipi"
     hidden_dims: tuple[int, int] = (64, 64)
     lr: float = 3e-3
     epochs: int = 60
@@ -115,7 +115,7 @@ class MLPEstimator:
         organ: str = "liver",
         snr: float = 30.0,
         n_synthetic: int = 4000,
-    ) -> "MLPEstimator":
+    ) -> MLPEstimator:
         """Train the MLP on ``(signals, params)`` or self-generated synthetic data.
 
         If ``signals`` or ``params`` are omitted, generates a synthetic training

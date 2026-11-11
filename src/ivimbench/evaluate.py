@@ -9,15 +9,15 @@ and returns both a structured dictionary (:class:`BenchmarkReport`) and a tidy
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .baselines import MLPEstimator, NLLSEstimator, SegmentedEstimator
+from .baselines import CRLBNormalEstimator, MLPEstimator, NLLSEstimator, SegmentedEstimator
 from .metrics.coverage import (
     DEFAULT_NOMINAL_LEVELS,
     DEFAULT_QUANTILE_LEVELS,
@@ -192,7 +192,7 @@ class BenchmarkSuite:
 
     def __init__(
         self,
-        protocol: str | AcquisitionProtocol | Sequence[float] = "osipi",
+        protocol: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "osipi",
         snr: float | Sequence[float] | np.ndarray = 30.0,
         *,
         alpha: float = 0.10,
@@ -235,21 +235,14 @@ class BenchmarkSuite:
             proto_label = self.protocol_name
 
         if snr is not None:
-            snr_eff: float | np.ndarray = (
-                float(snr) if np.ndim(snr) == 0 else np.asarray(snr, dtype=np.float64)
-            )
+            snr_arr = np.asarray(snr, dtype=np.float64)
+            snr_eff: float | np.ndarray = float(snr_arr.item()) if snr_arr.ndim == 0 else snr_arr
         elif isinstance(y_true, (SyntheticCohort, DigitalReferenceObject)) and y_true.snr is not None:
-            snr_eff = (
-                float(y_true.snr)
-                if np.ndim(y_true.snr) == 0
-                else np.asarray(y_true.snr, dtype=np.float64)
-            )
+            snr_y = np.asarray(y_true.snr, dtype=np.float64)
+            snr_eff = float(snr_y.item()) if snr_y.ndim == 0 else snr_y
         else:
-            snr_eff = (
-                float(self.snr)
-                if np.ndim(self.snr) == 0
-                else np.asarray(self.snr, dtype=np.float64)
-            )
+            snr_s = np.asarray(self.snr, dtype=np.float64)
+            snr_eff = float(snr_s.item()) if snr_s.ndim == 0 else snr_s
         return truth, b_arr, proto_label, snr_eff
 
     def evaluate(
@@ -303,12 +296,26 @@ class BenchmarkSuite:
                     signals, _ = y_true.to_voxels(foreground_only=True)
                 else:
                     raise ValueError("`signals` must be provided when scoring an `estimator` with raw y_true.")
-            if hasattr(estimator, "predict_quantiles"):
+            if hasattr(estimator, "predict_quantiles") and not isinstance(estimator, str):
                 q_pred = estimator.predict_quantiles(signals, levels_arr)
-            elif hasattr(estimator, "predict_intervals"):
+            elif hasattr(estimator, "predict_intervals") and not isinstance(estimator, str):
                 lower, upper = estimator.predict_intervals(signals, alpha=self.alpha)
                 if hasattr(estimator, "predict"):
                     point_pred = estimator.predict(signals)
+            else:
+                from .registry import run_estimator
+
+                norm_out = run_estimator(
+                    estimator,
+                    signals,
+                    b_arr,
+                    alpha=self.alpha,
+                    bounds=self.bounds,
+                )
+                point_pred = norm_out.point
+                lower, upper = norm_out.lower, norm_out.upper
+                if norm_out.std is not None:
+                    std_pred = norm_out.std
 
         # Resolve (point_mat, lower_mat, upper_mat)
         q_mat: np.ndarray | None = None
@@ -593,12 +600,17 @@ class BenchmarkSuite:
             elif norm == "nlls":
                 est = NLLSEstimator(protocol=b_arr, bounds=self.bounds)
                 label = "NLLS"
+            elif norm in ("crlb", "crlb_normal"):
+                est = CRLBNormalEstimator(protocol=b_arr, bounds=self.bounds)
+                label = "CRLBNormal"
             elif norm == "mlp":
                 est = MLPEstimator(protocol=b_arr, bounds=self.bounds, seed=self.seed)
                 est.fit(organ=organ, snr=snr_val)
                 label = "StandardMLP"
             else:
-                raise ValueError(f"Unknown baseline {key!r}; choose from 'segmented', 'nlls', 'mlp'.")
+                raise ValueError(
+                    f"Unknown baseline {key!r}; choose from 'segmented', 'nlls', 'crlb', 'mlp'."
+                )
 
             df_m = self.evaluate(
                 cohort,

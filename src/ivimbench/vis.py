@@ -6,8 +6,9 @@ Requires the optional ``vis`` extra (``pip install ivimbench[vis]``). Imports
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd

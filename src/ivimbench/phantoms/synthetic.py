@@ -16,9 +16,10 @@ Ported and consolidated from Lattice and Datum:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 import numpy as np
 from scipy import special
@@ -364,6 +365,37 @@ def ivim_triexp(
     )
 
 
+def ivim_kurtosis(
+    bvalues: np.ndarray | Sequence[float],
+    D: np.ndarray | float,
+    Dstar: np.ndarray | float,
+    f: np.ndarray | float,
+    K: np.ndarray | float = 0.75,
+    s0: np.ndarray | float = 1.0,
+) -> np.ndarray:
+    """Bi-exponential IVIM with non-Gaussian tissue diffusional kurtosis ``K >= 0``.
+
+    Models restricted intracellular hindrance via the cumulant expansion
+    ``exp(-b D + (1/6) b^2 D^2 K)`` clamped smoothly at the inflection point
+    ``b <= 3 / (D * K)`` to preserve physical signal monotonicity at high ``b``.
+    Reduces identically to :func:`ivim_biexp` when ``K = 0``.
+    """
+    b = _as_float_array(bvalues)
+    d_arr = _as_float_array(D)[..., None] if np.ndim(D) else float(D)
+    ds_arr = _as_float_array(Dstar)[..., None] if np.ndim(Dstar) else float(Dstar)
+    f_arr = _as_float_array(f)[..., None] if np.ndim(f) else float(f)
+    k_arr = _as_float_array(K)[..., None] if np.ndim(K) else float(K)
+    s0_arr = _as_float_array(s0)[..., None] if np.ndim(s0) else float(s0)
+
+    bd = b * d_arr
+    # Cap effective b*D for the quadratic kurtosis term at 3/K so d/db(-bD + 1/6 (bD)^2 K) <= 0
+    safe_k = np.maximum(k_arr, 0.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        bd_cap = np.where(safe_k > 0.0, np.minimum(bd, 3.0 / np.maximum(safe_k, 1e-12)), bd)
+    exponent_tissue = -bd + (1.0 / 6.0) * (bd_cap**2) * safe_k
+    return s0_arr * (f_arr * np.exp(-b * ds_arr) + (1.0 - f_arr) * np.exp(exponent_tissue))
+
+
 DEFAULT_EXTRA: dict[str, dict[str, float]] = {
     "biexp": {},
     "dispersion_gamma": {"k": 4.0},
@@ -554,7 +586,7 @@ class SyntheticCohort:
 
 
 def generate_cohort(
-    protocol: str | AcquisitionProtocol | Sequence[float] = "osipi",
+    protocol: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "osipi",
     organ: str = "liver",
     n_voxels: int = 10000,
     snr: float | Sequence[float] | np.ndarray = 30.0,

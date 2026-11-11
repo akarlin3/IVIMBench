@@ -1,20 +1,70 @@
-"""IVIMBench: Standardized phantoms, clinical protocols, and UQ calibration benchmarks."""
+"""IVIMBench: Extensible quantitative-MRI uncertainty, acquisition-design, and decision-utility benchmark suite."""
 
-from . import baselines, metrics, phantoms, protocols
-from .baselines import MLPEstimator, NLLSEstimator, SegmentedEstimator
+from . import (
+    acquisition,
+    baselines,
+    cli,
+    decision,
+    harnesses,
+    metrics,
+    phantoms,
+    protocols,
+    registry,
+    runner,
+)
+from ._version import __version__
+from .acquisition import (
+    CRLBResult,
+    OptimizedScheduleResult,
+    SchemeComparisonReport,
+    SchemeEvaluator,
+    compute_crlb,
+    crlb_optimality_criterion,
+    ivim_fisher_matrix,
+    optimize_b_schedule,
+)
+from .baselines import CRLBNormalEstimator, MLPEstimator, NLLSEstimator, SegmentedEstimator
+from .decision import (
+    DecisionVoIReport,
+    DomainShiftReport,
+    check_domain_shift,
+    compare_decision_calibration,
+    evaluate_decision_voi,
+)
 from .evaluate import BenchmarkReport, BenchmarkSuite
+from .harnesses import (
+    MisspecificationHarness,
+    MisspecificationReport,
+    RepeatabilityHarness,
+    RepeatabilityReport,
+    ScanRescanPair,
+    evaluate_misspecification,
+    evaluate_repeatability,
+    simulate_scan_rescan,
+)
 from .phantoms import (
+    ORGAN_DRO_PRESETS,
     PARAM_NAMES,
     DigitalReferenceObject,
     LesionSpec,
+    OrganDROPreset,
     SyntheticCohort,
     generate_cohort,
     generate_dro,
 )
-from .protocols import AcquisitionProtocol, PROTOCOLS, get_protocol, list_protocols
+from .protocols import PROTOCOLS, AcquisitionProtocol, get_protocol, list_protocols
+from .registry import (
+    DEFAULT_REGISTERED_ESTIMATORS,
+    NormalizedEstimatorOutput,
+    RegisteredEstimator,
+    get_estimator,
+    list_estimators,
+    register_estimator,
+    run_estimator,
+    unregister_estimator,
+)
+from .runner import MultiTaskBenchmarkResult, run_benchmark_suite
 from .vis import plot_calibration_curves, plot_tercile_coverage
-
-__version__ = "1.0.0"
 
 __all__ = [
     "__version__",
@@ -24,6 +74,8 @@ __all__ = [
     "SyntheticCohort",
     "DigitalReferenceObject",
     "LesionSpec",
+    "OrganDROPreset",
+    "ORGAN_DRO_PRESETS",
     "AcquisitionProtocol",
     "PROTOCOLS",
     "get_protocol",
@@ -32,11 +84,49 @@ __all__ = [
     "BenchmarkReport",
     "SegmentedEstimator",
     "NLLSEstimator",
+    "CRLBNormalEstimator",
     "MLPEstimator",
+    "DEFAULT_REGISTERED_ESTIMATORS",
+    "RegisteredEstimator",
+    "NormalizedEstimatorOutput",
+    "register_estimator",
+    "unregister_estimator",
+    "get_estimator",
+    "list_estimators",
+    "run_estimator",
+    "MultiTaskBenchmarkResult",
+    "run_benchmark_suite",
+    "CRLBResult",
+    "ivim_fisher_matrix",
+    "compute_crlb",
+    "crlb_optimality_criterion",
+    "OptimizedScheduleResult",
+    "SchemeComparisonReport",
+    "SchemeEvaluator",
+    "optimize_b_schedule",
+    "MisspecificationHarness",
+    "MisspecificationReport",
+    "evaluate_misspecification",
+    "ScanRescanPair",
+    "RepeatabilityHarness",
+    "RepeatabilityReport",
+    "simulate_scan_rescan",
+    "evaluate_repeatability",
+    "DecisionVoIReport",
+    "DomainShiftReport",
+    "evaluate_decision_voi",
+    "compare_decision_calibration",
+    "check_domain_shift",
     "plot_calibration_curves",
     "plot_tercile_coverage",
     "phantoms",
     "protocols",
     "metrics",
     "baselines",
+    "acquisition",
+    "harnesses",
+    "decision",
+    "registry",
+    "runner",
+    "cli",
 ]

@@ -14,8 +14,9 @@ and Datum (``datum.ci``):
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 from scipy import stats
@@ -447,7 +448,7 @@ class SplitConformalResidual:
             raise ValueError(f"`alpha` must lie in (0, 1); got {self.alpha}.")
         self.offsets_: np.ndarray | None = None
 
-    def calibrate(self, point_cal: np.ndarray, y_cal: np.ndarray) -> "SplitConformalResidual":
+    def calibrate(self, point_cal: np.ndarray, y_cal: np.ndarray) -> SplitConformalResidual:
         p_cal = np.asarray(point_cal, dtype=np.float64)
         truth = np.asarray(y_cal, dtype=np.float64)
         if p_cal.shape != truth.shape or p_cal.ndim != 2:
@@ -487,11 +488,12 @@ class SplitConformalQuantile:
         self.offsets_: list[dict[tuple[int, int], float]] = []
         self._n_params: int | None = None
 
-    def calibrate(self, q_pred_cal: np.ndarray, y_cal: np.ndarray) -> "SplitConformalQuantile":
+    def calibrate(self, q_pred_cal: np.ndarray, y_cal: np.ndarray) -> SplitConformalQuantile:
         q_cal = np.asarray(q_pred_cal, dtype=np.float64)
         truth = np.asarray(y_cal, dtype=np.float64)
+        levels = np.asarray(self.q_levels, dtype=np.float64)
         n, n_params, n_levels = q_cal.shape
-        if truth.shape != (n, n_params) or n_levels != self.q_levels.size:
+        if truth.shape != (n, n_params) or n_levels != levels.size:
             raise ValueError("Shape mismatch between `q_pred_cal`, `y_cal`, and `q_levels`.")
         self._n_params = n_params
         self.offsets_ = []
@@ -499,7 +501,7 @@ class SplitConformalQuantile:
             off: dict[tuple[int, int], float] = {}
             for j in range(n_levels // 2):
                 j_lo, j_hi = j, n_levels - 1 - j
-                a = 2.0 * float(self.q_levels[j_lo])
+                a = 2.0 * float(levels[j_lo])
                 scores = conformity_scores(q_cal[:, p, j_lo], q_cal[:, p, j_hi], truth[:, p])
                 off[(j_lo, j_hi)] = conformal_offset(scores, a)
             self.offsets_.append(off)
@@ -543,7 +545,7 @@ class MondrianConformalQuantile:
         q_pred_cal: np.ndarray,
         y_cal: np.ndarray,
         groups_cal: np.ndarray,
-    ) -> "MondrianConformalQuantile":
+    ) -> MondrianConformalQuantile:
         q_cal = np.asarray(q_pred_cal, dtype=np.float64)
         truth = np.asarray(y_cal, dtype=np.float64)
         grp = np.asarray(groups_cal)

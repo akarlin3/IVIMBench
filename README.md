@@ -1,112 +1,150 @@
 # IVIMBench
 
-**Standardized digital reference phantoms, clinical acquisition schedules, and uncertainty calibration benchmarks for quantitative IVIM MRI.**
+**Extensible quantitative-MRI uncertainty calibration, acquisition-design, scan–rescan repeatability, model-misspecification, and clinical decision-utility benchmark suite for IVIM diffusion MRI.**
 
 [![CI](https://github.com/akarlin3/IVIMBench/actions/workflows/ci.yml/badge.svg)](https://github.com/akarlin3/IVIMBench/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![Typed: PEP 561](https://img.shields.io/badge/typing-PEP%20561-informational.svg)](src/ivimbench/py.typed)
-[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-green.svg)](pyproject.toml)
+[![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-green.svg)](pyproject.toml)
 
-`IVIMBench` consolidates synthetic phantom generation (`Lattice`), benchmark protocols and submission harnesses (`Datum`), and distribution-free uncertainty quantification (UQ) calibration metrics (`Caliper`) into a unified, lightweight Python evaluation suite for intravoxel incoherent motion (IVIM) diffusion MRI:
+`IVIMBench` provides a unified, zero-PHI, purely NumPy/SciPy/Pandas benchmark platform for intravoxel incoherent motion (IVIM) diffusion MRI:
 
 $$S(b) = S_0 \left[ f \exp(-b D^*) + (1 - f) \exp(-b D) \right]$$
 
-All parameters use canonical physical MRI units across the entire library: diffusion weighting $b$ in $\text{s/mm}^2$, tissue diffusivity $D$ and pseudo-diffusion $D^*$ in $\text{mm}^2/\text{s}$, and microvascular perfusion fraction $f \in [0, 1]$ (ordered `("D", "Dstar", "f")`). All generated cohorts and digital reference objects (DROs) are 100% synthetic and PHI-free.
+All parameters use canonical physical MRI units across the entire library: diffusion weighting $b$ in $\text{s/mm}^2$, slow tissue diffusivity $D$ and microvascular pseudo-diffusion $D^*$ in $\text{mm}^2/\text{s}$, and perfusion fraction $f \in [0, 1]$ (ordered `("D", "Dstar", "f")`, with `D_star` accepted interchangeably). Every stochastic phantom, noise realization, bootstrap CI, and permutation test is deterministically seeded with `numpy.random.PCG64` and 100% synthetic/PHI-free.
+
+---
+
+## Architecture Overview (v1.1.0)
+
+1. **Estimator Registry & Multi-Task Benchmark Runner (`ivimbench.registry`, `ivimbench.runner`)** — `@register_estimator` protocol accepting any callable or class fitting `(signals, bvalues) -> {D, D_star, f, intervals?}`, shipped with pure NumPy/SciPy deterministic baselines (`"segmented"`, `"nlls"`, `"crlb"`) and `run_benchmark_suite(...)` exporting reproducible Markdown, JSON, LaTeX, and CSV tables across 5 forward families, SNR regimes, and clinical schedules.
+2. **Acquisition Design & NEX-Weighted Fisher Information (`ivimbench.acquisition`)** — Closed-form IVIM Fisher Information Matrix (`ivim_fisher_matrix`), Cramér–Rao Lower Bounds (`compute_crlb`) with explicit scan-time / NEX weighting, `SchemeEvaluator`, and `optimize_b_schedule(...)` reporting sharpness (`delta_sharp`), marginal coverage, and high-$D^*$ conditional coverage (`delta_cond`).
+3. **Misspecification & Scan–Rescan Repeatability Harnesses (`ivimbench.harnesses`)** —
+   - `MisspecificationHarness`: Evaluates bi-exponential estimators under controlled non-bi-exponential forward physics (`dispersion_gamma`, `dispersion_lognormal`, `stretched`, `triexp`, `kurtosis`, `heavy_tail`), explicitly separating global marginal coverage from slow-diffusion $D$ vs. pseudo-diffusion $D^*$ conditional degradation.
+   - `RepeatabilityHarness`: Simulates paired same-session acquisitions (`scan_A`, `scan_B`) under exact Rician or multi-coil non-central $\chi$ noise with optional SNR/gain/coil drift, scoring ground-truth-free retest capture alongside Spearman width-vs-scatter rank correlation.
+4. **Clinical Decision Value & Domain-Shift Safeguards (`ivimbench.decision`)** — Threshold utility pricing (`evaluate_decision_voi`, `compare_decision_calibration`) computing expected utility regret, the decision–calibration gap, and second-order Value of Information (`second_order_voi`) across clinical action cutoffs $\tau$, paired with a two-sample observable Mahalanobis signal-space + residual-space staleness detector (`check_domain_shift`).
+5. **Enriched 2D/3D Anatomical DROs & CLI (`ivimbench.phantoms`, `ivimbench.cli`)** — Structured `liver`, `pancreas` (desmoplastic fibrotic/hypovascular core + steep hypervascular perfusion rim), and `breast` (ACRIN-6698 aligned) phantoms with optional spatial $B_1$ and surface-coil SNR inhomogeneity maps, plus the `ivimbench` console entry point.
 
 ---
 
 ## Installation
 
-Install directly from GitHub:
+Install from GitHub or PyPI:
 
 ```bash
 pip install git+https://github.com/akarlin3/IVIMBench.git
-
-# With optional visualization dependencies (matplotlib, seaborn)
-pip install "ivimbench[vis] @ git+https://github.com/akarlin3/IVIMBench.git"
-```
-
-Or via PyPI:
-
-```bash
+# Or via PyPI:
 pip install ivimbench
 
-# Optional visualization dependencies (matplotlib, seaborn)
+# Optional matplotlib/seaborn diagnostic plotting extras:
 pip install "ivimbench[vis]"
 ```
 
-For local development and testing:
+For local development, linting, static type-checking, and testing:
 
 ```bash
 git clone https://github.com/akarlin3/IVIMBench.git
 cd IVIMBench
 pip install -e ".[dev]"
-pytest
+pytest -q
 ```
 
 ---
 
-## Quickstart: Benchmarking Custom Neural Network Outputs on OSIPI TF2.4
+## Command-Line Interface (`ivimbench`)
 
-Generate a reproducible 10,000-voxel hepatic cohort on the **OSIPI Taskforce 2.4** clinical protocol and score any custom neural network's point estimates and $(1 - \alpha) = 90\%$ prediction intervals in a few lines:
+`IVIMBench` installs the `ivimbench` console script for immediate reproducible benchmarking:
+
+```bash
+# 1. Fast (<10s) end-to-end synthetic DRO + multi-family calibration, repeatability & VoI smoke benchmark
+ivimbench demo
+
+# 2. Multi-task benchmark across all 5 forward families, exporting Markdown, JSON, LaTeX & CSV tables
+ivimbench benchmark --protocol osipi --snr 30 --out results/
+
+# 3. Compare fixed clinical schedules (and optional CRLB/calibration-optimized designs)
+ivimbench compare-schemes --schemes osipi,acrin_6698 --include-optimized
+```
+
+---
+
+## Quickstart 1: Benchmark Any Custom Estimator in 5 Lines of Python
+
+Register any NLLS, segmented, Bayesian, conformal, or deep-learning (`IVIMnet`) model via `@register_estimator` and evaluate it across protocols, SNR regimes, and forward physics:
 
 ```python
 import numpy as np
-from ivimbench import (
-    BenchmarkSuite,
-    generate_cohort,
-    plot_calibration_curves,
-    plot_tercile_coverage,
+from ivimbench import register_estimator, run_benchmark_suite
+
+@register_estimator("my_ivimnet")
+def fit_my_ivimnet(signals, bvalues):
+    d_hat = np.clip(-np.log(np.clip(signals[:, -1] / signals[:, 0], 1e-4, 1.0)) / bvalues[-1], 1e-4, 4e-3)
+    pt = np.column_stack([d_hat, np.full_like(d_hat, 35e-3), np.full_like(d_hat, 0.18)])
+    return {"D": pt[:, 0], "D_star": pt[:, 1], "f": pt[:, 2], "intervals": (0.8 * pt, 1.2 * pt)}
+
+res = run_benchmark_suite(
+    estimators=["my_ivimnet", "segmented", "nlls", "crlb"],
+    protocols=["osipi", "tcga_lihc", "acrin_6698"],
+    snr_regimes=[20.0, 40.0],
+    out_dir="results/",
 )
-
-# 1. One-line synthetic cohort on the OSIPI TF2.4 12-b schedule (SNR = 30, Rician noise)
-cohort = generate_cohort(
-    protocol="osipi",
-    organ="liver",
-    n_voxels=10000,
-    snr=30,
-    seed=42,
-)
-signals, ground_truth = cohort  # (10000, 12) DWI signals and (10000, 3) [D, D*, f]
-
-# 2. Plug in predictions from your custom neural network (point estimates + 90% intervals)
-#    Replace with your PyTorch / JAX / TensorFlow model's inference outputs:
-rng = np.random.default_rng(123)
-nn_point = np.clip(
-    ground_truth + rng.normal(0.0, [1.2e-4, 1.4e-2, 0.03], size=ground_truth.shape),
-    a_min=[1.0e-4, 3.0e-3, 0.0],
-    a_max=[4.0e-3, 0.20, 0.70],
-)
-nn_std = np.broadcast_to([1.3e-4, 1.5e-2, 0.032], ground_truth.shape)
-z_90 = 1.6448536
-nn_lower, nn_upper = nn_point - z_90 * nn_std, nn_point + z_90 * nn_std
-
-# 3. Run the unified UQ calibration, CRLB sharpness, and boundary-railing harness
-suite = BenchmarkSuite(protocol="osipi", snr=30, alpha=0.10, seed=42)
-report = suite.evaluate(
-    cohort,
-    point_pred=nn_point,
-    intervals=(nn_lower, nn_upper),
-    method="CustomIVIMNet",
-)
-
-print(report.format_table())
-df = report.to_dataframe()  # Tidy pandas DataFrame across ("D", "Dstar", "f")
-
-# 4. Compare directly against built-in reference baselines (Segmented, NLLS, StandardMLP)
-baseline_df = suite.run_baselines(cohort, include=("segmented", "nlls", "mlp"))
-
-# 5. Optional diagnostic plots (requires `ivimbench[vis]`)
-fig_cal, _ = plot_calibration_curves(cohort, {"CustomIVIMNet": (nn_point, nn_std)})
-fig_ter, _ = plot_tercile_coverage(report, parameter="Dstar")
+print(res.to_markdown(aggregate=True))
 ```
 
-`BenchmarkSuite.evaluate` natively accepts:
-1. **Explicit central intervals**: `point_pred` + `intervals=(lower, upper)` (or `lower=..., upper=...`),
-2. **Gaussian error bars**: `point_pred` + `std_pred`,
-3. **Quantile grids / posterior percentiles**: `q_pred` of shape `(n_voxels, 3, n_quantiles)` + `q_levels`, or
-4. **Estimator objects**: `estimator=...` implementing `predict_quantiles(signals, q_levels)` or `predict_intervals(signals, alpha)`.
+---
+
+## Quickstart 2: Acquisition CRLB Design, Repeatability & Decision VoI
+
+```python
+from ivimbench import (
+    SchemeEvaluator,
+    check_domain_shift,
+    compute_crlb,
+    evaluate_decision_voi,
+    evaluate_misspecification,
+    evaluate_repeatability,
+    generate_cohort,
+    generate_dro,
+    optimize_b_schedule,
+    run_estimator,
+    simulate_scan_rescan,
+)
+
+# 1. Enriched 2D Pancreas DRO (fibrotic core + steep perfusion rim + B1/SNR inhomogeneity)
+dro_pancreas = generate_dro(
+    shape=(64, 64),
+    organ="pancreas",
+    protocol="osipi",
+    snr=30.0,
+    b1_inhomogeneity=0.15,
+    snr_inhomogeneity=0.20,
+    seed=42,
+)
+
+# 2. NEX-weighted Fisher CRLB & calibration-aware b-value schedule optimization
+opt_sched = optimize_b_schedule(n_b=8, organ="liver", snr=30.0, objective="calibration_aware", total_nex=12)
+scheme_report = SchemeEvaluator(organ="liver", snr=30.0).compare(["osipi", "acrin_6698", opt_sched])
+print(scheme_report.to_markdown())
+
+# 3. Misspecification stress harness (separating slow D vs. pseudo-diffusion D* degradation)
+misspec = evaluate_misspecification(estimators=["segmented", "crlb"], protocol="osipi", snr=30.0)
+print(misspec.to_markdown())
+
+# 4. Ground-truth-free Rician scan-rescan repeatability & Spearman width-vs-scatter sizing
+pair = simulate_scan_rescan(protocol="osipi", organ="liver", snr=30.0, noise_type="rician", seed=42)
+rep = evaluate_repeatability(pair, estimators=["segmented", "crlb"], alpha=0.10)
+print(rep.to_markdown())
+
+# 5. Clinical threshold decision VoI & observable domain-shift check
+ref = generate_cohort(protocol="osipi", organ="pancreas", n_voxels=400, snr=25.0, seed=42)
+tgt = generate_cohort(protocol="osipi", organ="pancreas", n_voxels=400, snr=12.0, family="triexp", seed=99)
+est = run_estimator("crlb", ref.signals, ref.bvalues, alpha=0.10, snr=25.0)
+voi = evaluate_decision_voi(ref.params, est.lower, est.upper, point=est.point, parameter="f", cost_ratio=0.15)
+shift = check_domain_shift(ref.signals, tgt.signals, bvalues=ref.bvalues)
+print(voi.to_markdown())
+print("Domain shift stale?", shift.is_stale, shift.staleness_reasons)
+```
 
 ---
 
@@ -123,75 +161,38 @@ fig_ter, _ = plot_tercile_coverage(report, parameter="Dstar")
 | `acrin_6698` | ACRIN 6698 Breast Trial 4-$b$ | `0, 100, 600, 800` | 4 | TCIA [`10.7937/TCIA.2019.CWVLPD26`](https://doi.org/10.7937/TCIA.2019.CWVLPD26) |
 | `lattice_22b` | Lattice Dense Research 22-$b$ | `0, 5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000` | 22 | Lattice DRO reference schedule |
 
-Custom 1D NumPy arrays or Python sequences of $b$-values can also be passed anywhere `protocol` is accepted.
-
 ---
 
-## Organ Priors, Forward Families, and Spatial DROs
+## Mathematical Formulation
 
-### Organ Parameter Priors (`ivimbench.phantoms.synthetic`)
-Physiologically grounded parameter ranges with Gaussian copula inter-parameter correlations (`prior="realistic"`, log-uniform $D^*$ marginals) or independent uniform/log-uniform priors:
+### 1. NEX-Weighted Fisher Information & Cramér–Rao Lower Bounds (`ivimbench.acquisition`)
+For voxel parameters $\theta = (D, D^*, f)$ (and optional nuisance amplitude $S_0$), baseline noise $\sigma_0 = S_0 / \text{SNR}$, and per-$b$ signal averages (NEX) $n_k$:
 
-| Organ | $D$ ($\times 10^{-3}\text{ mm}^2/\text{s}$) | $D^*$ ($\times 10^{-3}\text{ mm}^2/\text{s}$) | $f$ |
-| :--- | :---: | :---: | :---: |
-| `liver` | $[0.6, 1.8]$ | $[25.0, 120.0]$ | $[0.12, 0.40]$ |
-| `breast` | $[0.6, 2.4]$ | $[10.0, 60.0]$ | $[0.03, 0.22]$ |
-| `brain` | $[0.5, 1.5]$ | $[8.0, 45.0]$ | $[0.02, 0.12]$ |
-| `pancreas` | $[0.8, 2.2]$ | $[15.0, 90.0]$ | $[0.10, 0.38]$ |
-| `generic` | $[0.5, 3.0]$ | $[10.0, 100.0]$ | $[0.05, 0.40]$ |
+$$I(\theta) = \frac{1}{\sigma_0^2} \sum_{k=1}^{N_b} n_k \, \nabla_\theta S(b_k; \theta) \nabla_\theta S(b_k; \theta)^\top, \qquad \sigma_{\text{CRLB}, j}(\theta) = \sqrt{\left[I(\theta)^{-1}\right]_{jj}}$$
 
-Five forward signal generators (`family="biexp"`, `"dispersion_gamma"`, `"dispersion_lognormal"`, `"stretched"`, `"triexp"`) enable controlled model-misspecification stress testing, each reducing to `biexp` at its analytical continuity limit.
+Consequently, $\sigma_{\text{CRLB}} \propto \text{SNR}^{-1} \cdot (\text{NEX})^{-1/2}$. When comparing acquisition schemes $s$ against a reference protocol $s_{\text{ref}}$, `SchemeEvaluator` reports relative interval sharpness $\Delta_{\text{sharp}}(s) = (\bar{W}_{\text{norm}}(s) - \bar{W}_{\text{norm}}(s_{\text{ref}})) / \bar{W}_{\text{norm}}(s_{\text{ref}})$ alongside high-$D^*$ tercile conditional coverage $\Delta_{\text{cond}}(s) = \hat{C}_{\text{high-}D^*}(s) - (1 - \alpha)$.
 
-### Spatial Digital Reference Objects (`ivimbench.phantoms.dro`)
-`generate_dro(shape=(64, 64), organ="liver", protocol="osipi", snr=30, seed=42)` synthesizes 2D or 3D structured anatomical phantoms with spatially correlated parenchymal fields and embedded hypervascular, hypovascular, and necrotic focal lesions.
+### 2. Forward Signal Families & Continuity Limits (`ivimbench.phantoms`, `ivimbench.harnesses.misspecification`)
+All non-bi-exponential forward generators converge smoothly to the canonical bi-exponential signal as their heterogeneity parameter vanishes:
+- **`dispersion_gamma`**: Gamma microvascular velocity spectrum $f (1 + b D^* / k)^{-k} \to f \exp(-b D^*)$ as $k \to \infty$.
+- **`dispersion_lognormal`**: Gauss–Hermite log-normal $D^*$ distribution ($\sigma_{\ln D^*} \to 0$).
+- **`stretched`**: Kohlrausch–Williams–Watts tissue anomalous diffusion $(1 - f)\exp(-(b D)^\alpha)$ ($\alpha \to 1$).
+- **`triexp`**: Three-compartment slow + intermediate + fast vascular flow ($f_{\text{interm}} \to 0$).
+- **`kurtosis`**: Non-Gaussian restricted tissue kurtosis $(1 - f)\exp(-b D + \frac{1}{6} b^2 D^2 K_{\text{eff}})$ ($K \to 0$).
+- **`heavy_tail`**: Student-$t$ pulsatile/outlier innovations ($\nu \to \infty$, `outlier_scale` $\to 0$).
 
-### Exact Magnitude Noise Models (`ivimbench.phantoms.noise`)
-- **Rician (`noise_type="rician"`)**: Single-coil quadrature magnitude $\sqrt{(S + \varepsilon_{\text{re}})^2 + \varepsilon_{\text{im}}^2}$ with $\sigma = S_0 / \text{SNR}$.
-- **Non-central $\chi$ (`noise_type="noncentral_chi"`, `n_coils=L`)**: Multi-coil root-sum-of-squares (SoS) magnitude across $L$ channels ($2L$ degrees of freedom), reducing bit-for-bit to Rician noise at `n_coils=1`.
+### 3. Scan–Rescan Repeatability & Spearman Precision Sizing (`ivimbench.harnesses.repeatability`)
+Given independent paired scans $(S^{(A)}, S^{(B)})$ without ground-truth labels, `RepeatabilityHarness` computes directional retest capture $\hat{C}_{A \to B} = \frac{1}{N}\sum_{i=1}^N \mathbf{1}\{\hat{\theta}_{i,B} \in [\hat{L}_{i,A}, \hat{U}_{i,A}]\}$, symmetric retest capture $\frac{1}{2}(\hat{C}_{A \to B} + \hat{C}_{B \to A})$ (whose exact Gaussian expectation for unbiased $(1-\alpha)$ intervals is $2\Phi(z_{1-\alpha/2}/\sqrt{2}) - 1 \approx 0.755$ at $1-\alpha = 0.90$), within-voxel standard deviation $\text{wSD} = \sqrt{\frac{1}{2N}\sum_i (\hat{\theta}_{i,B} - \hat{\theta}_{i,A})^2}$, repeatability coefficient $\text{RC} = 1.96\sqrt{2}\,\text{wSD}$, and Spearman rank correlation $r_s(\bar{W}_i, |\hat{\theta}_{i,B} - \hat{\theta}_{i,A}|)$ to separate adaptive heteroscedastic sizing from systematic bias.
 
----
+### 4. Threshold Decision Regret, Second-Order VoI & Domain Shift (`ivimbench.decision`)
+For a clinical intervention triggered when $\theta \le \tau$ (or $\theta \ge \tau$) with relative false-positive cost $c \in (0, 1)$ versus false-negative cost $1 - c$, the Bayes-optimal action is $\hat{a}_i(\tau) = \mathbf{1}\{\hat{p}_i(\tau) \ge c\}$ where $\hat{p}_i(\tau) = \hat{\mathbb{P}}(\theta_i \le \tau \mid \hat{L}_i, \hat{U}_i)$. Realized utility regret against the oracle $E_i(\tau) = \mathbf{1}\{\theta_i \le \tau\}$ is:
 
-## Evaluation Metrics & CRLB Efficiency Ratio
+$$R(\hat{a}; \tau) = \frac{1}{N}\sum_{i=1}^N \Big[ c \, \hat{a}_i (1 - E_i) + (1 - c)(1 - \hat{a}_i) E_i \Big]$$
 
-### 1. Marginal & Conditional Coverage (`ivimbench.metrics.coverage`)
-- **Marginal Coverage & Gap**: $\hat{C}(1-\alpha) = \frac{1}{N}\sum_{i=1}^N \mathbf{1}\{y_i \in [\hat{L}_i, \hat{U}_i]\}$ and $\Delta C = \hat{C}(1-\alpha) - (1-\alpha)$ with non-parametric bootstrap CIs.
-- **$D^*$-Tercile Conditional Coverage**: Stratifies empirical coverage across low, mid, and high ground-truth $D^*$ terciles (`tercile_cov_low`, `tercile_cov_mid`, `tercile_cov_high`) to expose local under-coverage above the pseudo-diffusion identifiability wall even when marginal coverage appears nominal.
-- **SNR-Stratified Coverage & Proper Scoring Rules**: Quantile Expected Calibration Error (`ece_quantile`), pinball loss, Winkler interval score, and post-hoc conformal wrappers (`SplitConformalResidual`, `SplitConformalQuantile`, `MondrianConformalQuantile`).
-
-### 2. Sharpness & Cramér-Rao Lower Bound Efficiency (`ivimbench.metrics.sharpness`)
-At ground-truth voxel parameters $\theta_i = (D_i, D^*_i, f_i)$ and noise scale $\sigma_i = S_0 / \text{SNR}_i$, the Gaussian Fisher information matrix is:
-
-$$I(\theta_i) = \frac{1}{\sigma_i^2} J(\theta_i)^\top W J(\theta_i), \qquad \sigma_{\text{CRLB}, i, j} = \sqrt{\left[I(\theta_i)^{-1}\right]_{jj}}$$
-
-where $J(\theta_i) = \partial S(b; \theta_i) / \partial \theta_i$ is the analytical $N_b \times 3$ bi-exponential Jacobian and $W = \text{diag}(n_{\text{avg}})$ weights repeated excitations. The minimum asymptotic $(1 - \alpha)$ Gaussian interval width attainable by any locally unbiased estimator is:
-
-$$W_{\text{CRLB}, i, j}(1 - \alpha) = 2 \, z_{1 - \alpha/2} \, \sigma_{\text{CRLB}, i, j}$$
-
-Comparing predicted interval widths $\hat{W}_{i,j} = \hat{U}_{i,j} - \hat{L}_{i,j}$ against $W_{\text{CRLB}, i, j}$ across identifiable voxels defines two reciprocal summary metrics:
-
-1. **Sharpness-to-CRLB Ratio (`sharpness_to_crlb_ratio`)**:
-   $$\rho_{\text{CRLB}, j} = \operatorname{median}_i \left( \frac{\hat{W}_{i,j}}{W_{\text{CRLB}, i, j}(1 - \alpha)} \right)$$
-   Equals `1.0` for an asymptotically efficient unbiased Gaussian interval. Values `> 1.0` quantify interval inflation relative to the information-theoretic floor; values `< 1.0` indicate informative Bayesian/learned prior shrinkage (if calibrated) or over-confident under-dispersion (if under-covering).
-2. **Classical CRLB Efficiency (`crlb_efficiency`)**:
-   $$\eta_{\text{CRLB}, j} = \operatorname{median}_i \left( \frac{W_{\text{CRLB}, i, j}(1 - \alpha)}{\hat{W}_{i,j}} \right)$$
-   Bounded in $(0, 1]$ for unbiased calibrated estimators (`1.0` = optimal Cramér-Rao efficiency).
-
-### 3. Boundary Railing Diagnostics (`ivimbench.metrics.railing`)
-Flags point estimates pinned within `rail_tol * (upper_bound - lower_bound)` (default `1%` of box span) of optimization or physiological boundaries (`DEFAULT_PARAM_BOUNDS`), reporting lower, upper, and total railing percentages alongside chunked percentile bootstrap 95% CIs (`railing_pct`, `railing_ci_lo_pct`, `railing_ci_hi_pct`).
-
----
-
-## Reproducible Random Seeds
-
-Every stochastic operation in `IVIMBench` uses explicit `numpy.random.Generator` instances (`PCG64`) seeded from integer seeds (default `seed=42`) with zero reliance on global `np.random` state:
-
-- **`generate_cohort(..., seed=s)`** decouples RNG streams via fixed integer offsets:
-  - `s + 0`: Base physiological parameter sampling $(D, D^*, f)$ (`sample_organ_params`).
-  - `s + 4040`: Auxiliary voxel-level SNR grid assignment when `snr` is passed as a multi-SNR schedule.
-  - `s + 7000`: Thermal Rician / non-central $\chi$ / Gaussian noise draws (`inject_noise`).
-  - Changing `snr` or `noise_type` while keeping `seed=42` preserves the exact underlying ground-truth parameter cohort $(D, D^*, f)$ byte-for-bit.
-- **`generate_dro(..., seed=s)`** uses `s + 101` for smooth spatial Gaussian random fields and `s + 7000` for magnitude noise injection.
-- **`BenchmarkSuite(..., seed=s)`** seeds parameter-wise bootstrap confidence intervals deterministically at `s + j` (railing CIs) and `s + 100 + j` (coverage CIs).
+`evaluate_decision_voi` quantifies:
+- **Decision–Calibration Gap**: $|\hat{R}_{\text{perceived}}(\tau) - R(\hat{a}; \tau)|$, measuring how badly an estimator misprices the clinical risk of its own recommended actions.
+- **Second-Order Value of Information (`second_order_voi`)**: $R(\hat{a}_{\text{raw}}; \tau) - R(\hat{a}_{\text{cal}}; \tau)$, pricing the expected clinical utility gained purely by calibrating predictive uncertainty.
+- **Observable Domain-Shift Check (`check_domain_shift`)**: Computes two-sample regularized Mahalanobis distances, reference-quantile outlier rates, and deterministic `PCG64` permutation $p$-values across normalized signal-decay space and bi-exponential fit residual space.
 
 ---
 
@@ -199,33 +200,53 @@ Every stochastic operation in `IVIMBench` uses explicit `numpy.random.Generator`
 
 ```text
 IVIMBench/
-├── pyproject.toml
+├── .github/workflows/
+│   ├── ci.yml                  # Ruff, Mypy, Pytest & CLI smoke matrix (Python 3.10–3.12)
+│   └── publish.yml             # Tagged wheel/sdist build, Twine check & GitHub Release upload
+├── pyproject.toml              # PEP 621 metadata, console script & tool configs
 ├── README.md
 ├── LICENSE
 ├── CITATION.cff
-├── src/
-│   └── ivimbench/
-│       ├── __init__.py
-│       ├── phantoms/
-│       │   ├── synthetic.py    # Organ parameter priors & 5 forward signal families
-│       │   ├── dro.py          # 2D/3D spatial Digital Reference Objects with lesions
-│       │   └── noise.py        # Exact Rician & multi-coil non-central chi injectors
-│       ├── protocols.py        # Clinical b-value schedules (OSIPI TF2.4, TCGA-LIHC, ACRIN 6698)
-│       ├── metrics/
-│       │   ├── coverage.py     # Marginal, SNR- & D*-tercile coverage + conformal wrappers
-│       │   ├── sharpness.py    # Absolute/normalized width & CRLB efficiency ratios
-│       │   └── railing.py      # Boundary railing fractions & percentile bootstrap CIs
-│       ├── baselines/          # Reference estimators (NLLS, Segmented, StandardMLP)
-│       ├── vis.py              # Calibration curves & D*-tercile coverage bar plots
-│       └── evaluate.py         # Unified BenchmarkSuite harness
+├── src/ivimbench/
+│   ├── __init__.py
+│   ├── _version.py
+│   ├── py.typed                # PEP 561 typed package marker
+│   ├── cli.py                  # `ivimbench` CLI (`demo`, `benchmark`, `compare-schemes`)
+│   ├── registry.py             # `@register_estimator` protocol & built-in registrations
+│   ├── runner.py               # Multi-task runner + Markdown/JSON/LaTeX/CSV exporters
+│   ├── protocols.py            # Clinical b-schedules (OSIPI TF2.4, TCGA-LIHC, ACRIN 6698)
+│   ├── evaluate.py             # Core BenchmarkSuite & BenchmarkReport
+│   ├── vis.py                  # Calibration curves & D*-tercile bar plots
+│   ├── acquisition/
+│   │   ├── crlb.py             # Analytical NEX/scan-time Fisher matrix & CRLB calculator
+│   │   └── design.py           # `SchemeEvaluator` & `optimize_b_schedule`
+│   ├── harnesses/
+│   │   ├── misspecification.py # Non-bi-exponential stress harness (D vs D* separation)
+│   │   └── repeatability.py    # Rician / nc-chi scan-rescan harness & Spearman sizing
+│   ├── decision/
+│   │   └── voi.py              # Threshold utility regret, 2nd-order VoI & domain-shift check
+│   ├── phantoms/
+│   │   ├── synthetic.py        # Organ priors & multi-compartment forward models
+│   │   ├── dro.py              # 2D/3D liver, pancreas & breast DROs + B1/SNR maps
+│   │   └── noise.py            # Exact Rician & multi-coil non-central chi injectors
+│   ├── metrics/
+│   │   ├── coverage.py         # Marginal, SNR- & D*-tercile coverage + conformal wrappers
+│   │   ├── sharpness.py        # Absolute/normalized width & CRLB efficiency ratios
+│   │   └── railing.py          # Boundary railing fractions & bootstrap CIs
+│   └── baselines/              # Segmented, simultaneous NLLS, CRLBNormal & MLP baselines
 └── tests/
+    ├── test_acquisition.py
+    ├── test_decision.py
+    ├── test_dro_and_cli.py
+    ├── test_harnesses.py
+    ├── test_metrics.py
     ├── test_phantoms.py
     ├── test_protocols.py
-    └── test_metrics.py
+    └── test_registry_and_runner.py
 ```
 
 ---
 
 ## Citation
 
-If you use `IVIMBench`, its digital reference objects, or its calibration benchmark suite in your research, please cite the software and underlying open IVIM standardization benchmarks documented in [`CITATION.cff`](CITATION.cff).
+If you use `IVIMBench`, its digital reference objects, acquisition-design tools, or calibration/decision harnesses in your research, please cite the software and open IVIM standardization benchmarks documented in [`CITATION.cff`](CITATION.cff).

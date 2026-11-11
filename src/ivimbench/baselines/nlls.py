@@ -12,12 +12,12 @@ Ported and unified from Caliper (``caliper.baselines``) and Sextant
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 import numpy as np
-from scipy.optimize import least_squares
 from scipy import stats
+from scipy.optimize import least_squares
 
 from ..metrics.coverage import DEFAULT_QUANTILE_LEVELS
 from ..metrics.railing import DEFAULT_PARAM_BOUNDS, DEFAULT_RAIL_TOL
@@ -84,7 +84,7 @@ class NLLSEstimator:
         Maximum function evaluations per voxel.
     """
 
-    protocol: str | AcquisitionProtocol | Sequence[float] = "osipi"
+    protocol: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "osipi"
     bounds: Mapping[str, tuple[float, float]] | None = None
     s0_bounds: tuple[float, float] = (0.1, 2.5)
     init: tuple[float, float, float] = (1.1e-3, 25.0e-3, 0.15)
@@ -104,7 +104,7 @@ class NLLSEstimator:
         if self.sd_convention not in ("honest", "floored"):
             raise ValueError("`sd_convention` must be 'honest' or 'floored'.")
 
-    def fit(self, signals: np.ndarray | None = None, params: np.ndarray | None = None) -> "NLLSEstimator":
+    def fit(self, signals: np.ndarray | None = None, params: np.ndarray | None = None) -> NLLSEstimator:
         """No-op fit method for API parity with learned estimators."""
         _ = (signals, params)
         return self

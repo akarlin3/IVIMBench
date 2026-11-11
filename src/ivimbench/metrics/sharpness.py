@@ -40,8 +40,9 @@ against ``W_CRLB`` yields two reciprocal summary ratios over identifiable voxels
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from scipy import stats

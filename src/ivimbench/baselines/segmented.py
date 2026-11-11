@@ -12,8 +12,8 @@ vectorized NumPy:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 import numpy as np
 from scipy import stats
@@ -63,7 +63,7 @@ class SegmentedEstimator:
         - ``"asymptotic"``: Per-voxel residual-scaled local Jacobian standard errors.
     """
 
-    protocol: str | AcquisitionProtocol | Sequence[float] = "osipi"
+    protocol: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "osipi"
     b_thresh: float = 200.0
     bounds: Mapping[str, tuple[float, float]] | None = None
     uncertainty: str = "homoscedastic"
@@ -82,7 +82,7 @@ class SegmentedEstimator:
         if self.uncertainty not in ("asymptotic", "homoscedastic"):
             raise ValueError("`uncertainty` must be 'asymptotic' or 'homoscedastic'.")
 
-    def fit(self, signals: np.ndarray | None = None, params: np.ndarray | None = None) -> "SegmentedEstimator":
+    def fit(self, signals: np.ndarray | None = None, params: np.ndarray | None = None) -> SegmentedEstimator:
         """No-op fit method for API parity with learned estimators."""
         _ = (signals, params)
         return self

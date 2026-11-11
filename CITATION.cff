@@ -5,25 +5,27 @@ message: >-
   methodology manuscripts noted below are PRE-PUBLICATION (no publication DOI
   yet); any Zenodo DOIs in their notes refer to software archives rather than
   peer-reviewed journal articles.
-title: "IVIMBench: Standardized digital reference phantoms, clinical acquisition schedules, and uncertainty calibration benchmarks for quantitative IVIM MRI"
+title: "IVIMBench: Extensible quantitative-MRI uncertainty, acquisition-design, repeatability, and clinical decision-utility benchmark suite for IVIM diffusion MRI"
 abstract: >-
-  IVIMBench is a unified, open-source Python evaluation suite for quantitative
-  intravoxel incoherent motion (IVIM) diffusion MRI. It consolidates
-  physiologically grounded organ parameter samplers and 2D/3D spatial Digital
-  Reference Objects (DROs) with exact Rician and multi-coil non-central chi
-  noise injection, standardized clinical b-value protocols (OSIPI TF2.4,
-  TCGA-LIHC, ACRIN 6698), reference estimators (NLLS, Two-Step Segmented,
-  heteroscedastic MLP), and distribution-free uncertainty calibration metrics
-  including D*-tercile and SNR-stratified conditional coverage, Cramér-Rao
-  lower bound (CRLB) efficiency ratios, and boundary-railing bootstrap
-  diagnostics. All cohorts and phantoms are synthetic and PHI-free.
+  IVIMBench is an extensible, open-source Python benchmark suite for quantitative
+  intravoxel incoherent motion (IVIM) diffusion MRI. It provides a unified
+  estimator registry (@register_estimator) and multi-task benchmark runner across
+  five forward signal families and clinical b-value protocols (OSIPI TF2.4,
+  TCGA-LIHC, ACRIN 6698); NEX- and scan-time-weighted Fisher information and
+  Cramér-Rao lower bound (CRLB) schedule optimization; non-bi-exponential model
+  misspecification and Rician/non-central chi scan-rescan repeatability harnesses;
+  clinical threshold decision-utility regret, second-order value-of-information
+  (VoI) pricing, and observable Mahalanobis domain-shift safeguards; and 2D/3D
+  anatomical Digital Reference Objects (liver, pancreas, breast) with spatial B1
+  and SNR inhomogeneity maps. All cohorts and phantoms are 100% synthetic,
+  deterministically seeded with PCG64, and PHI-free.
 type: software
 authors:
   - given-names: Avery
     family-names: Karlin
     email: ak5232@columbia.edu
     orcid: "https://orcid.org/0000-0003-3848-6782"
-version: "1.0.0"
+version: "1.1.0"
 date-released: "2026-11-10"
 license: MIT
 repository-code: "https://github.com/akarlin3/IVIMBench"
@@ -36,6 +38,9 @@ keywords:
   - calibration
   - conformal-prediction
   - Cramer-Rao-lower-bound
+  - experimental-design
+  - repeatability
+  - value-of-information
   - OSIPI
   - benchmark
 references:

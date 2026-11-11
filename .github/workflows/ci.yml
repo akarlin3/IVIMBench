@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  test-and-build:
+  lint-typecheck-test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
@@ -32,17 +32,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      - name: Upgrade pip and install dependencies
+      - name: Upgrade pip and install package with dev extras
         run: |
           python -m pip install --upgrade pip
-          pip install build pytest
-          pip install -e ".[vis]"
-          pip install -e .
+          pip install -e ".[dev]"
 
-      - name: Run test suite
-        run: pytest tests/ -q
+      - name: Lint with Ruff
+        run: ruff check src/ tests/
 
-      - name: Build wheel and sdist
+      - name: Type-check with Mypy
+        run: mypy src/ivimbench
+
+      - name: Run deterministic Pytest suite
+        run: pytest -q
+
+      - name: Execute CLI smoke benchmark (<10s)
+        run: ivimbench demo
+
+      - name: Build and verify wheel & sdist
         run: |
           python -m build
+          twine check dist/*
           ls -lh dist/*.whl dist/*.tar.gz

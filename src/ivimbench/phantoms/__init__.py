@@ -1,8 +1,10 @@
 """Digital phantom generators, organ parameter samplers, and MRI noise models."""
 
 from .dro import (
+    ORGAN_DRO_PRESETS,
     DigitalReferenceObject,
     LesionSpec,
+    OrganDROPreset,
     default_lesions_for_organ,
     generate_dro,
 )
@@ -30,6 +32,7 @@ from .synthetic import (
     ivim_biexp,
     ivim_dispersion_gamma,
     ivim_dispersion_lognormal,
+    ivim_kurtosis,
     ivim_stretched,
     ivim_triexp,
     sample_organ_params,
@@ -48,12 +51,15 @@ __all__ = [
     "ivim_biexp",
     "ivim_dispersion_gamma",
     "ivim_dispersion_lognormal",
+    "ivim_kurtosis",
     "ivim_stretched",
     "ivim_triexp",
     "SyntheticCohort",
     "generate_cohort",
     "continuity_residual",
     "LesionSpec",
+    "OrganDROPreset",
+    "ORGAN_DRO_PRESETS",
     "DigitalReferenceObject",
     "default_lesions_for_organ",
     "generate_dro",
