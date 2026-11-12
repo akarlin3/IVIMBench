@@ -145,6 +145,8 @@ def _extract_bounds_pair(
             if key not in iv_obj:
                 raise KeyError(f"Missing interval entry for {p!r} in `intervals` mapping.")
             entry = iv_obj[key]
+            lo_p: np.ndarray
+            hi_p: np.ndarray
             if isinstance(entry, tuple) and len(entry) == 2:
                 lo_p = np.atleast_1d(np.asarray(entry[0], dtype=np.float64)).ravel()
                 hi_p = np.atleast_1d(np.asarray(entry[1], dtype=np.float64)).ravel()

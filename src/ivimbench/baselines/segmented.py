@@ -130,7 +130,7 @@ class SegmentedEstimator:
         ds = grid[np.argmin(sse_grid, axis=1)].copy()
         ds = np.clip(ds, eff_lo, ds_hi)
 
-        lam = np.full(n, 1e-4, dtype=np.float64)
+        lam: np.ndarray = np.full(n, 1e-4, dtype=np.float64)
         for _ in range(int(self.n_gn_iter)):
             exp_ds = np.exp(-ds[:, None] * b[None, :])
             r = (tail + f_hat[:, None] * exp_ds) - y

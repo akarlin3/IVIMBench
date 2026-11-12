@@ -216,7 +216,7 @@ class CRLBNormalEstimator:
             [s0_hi, np.full(n, d_hi), np.full(n, ds_hi), np.full(n, f_hi)]
         )
         scale4 = np.array([1.0, 1e-3, 3e-2, 0.2], dtype=np.float64)
-        lam = np.full(n, 1e-3, dtype=np.float64)
+        lam: np.ndarray = np.full(n, 1e-3, dtype=np.float64)
         eye4 = np.eye(4, dtype=np.float64)[None, :, :]
 
         # Vectorized damped Levenberg-Marquardt refinement across all voxels

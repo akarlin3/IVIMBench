@@ -176,10 +176,11 @@ def optimize_b_schedule(
     u0_base[-1] = -2.5  # push highest b near b_max
     init_loss = _loss(u0_base)
 
-    best_u = u0_base.copy()
+    best_u: np.ndarray = u0_base.copy()
     best_val = init_loss
 
     for r in range(max(int(n_restarts), 1)):
+        u_start: np.ndarray
         if r == 0:
             u_start = u0_base.copy()
         elif r == 1:

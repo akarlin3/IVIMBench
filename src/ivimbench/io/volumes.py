@@ -375,7 +375,7 @@ def _read_nifti1_numpy(path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, An
             f"Truncated voxel payload in {path}: expected {vox_offset + byte_len} bytes, got {len(raw)}."
         )
 
-    arr_f = np.ndarray(
+    arr_f: np.ndarray = np.ndarray(
         shape=shape,
         dtype=np_dt,
         buffer=memoryview(raw)[vox_offset : vox_offset + byte_len],
@@ -628,6 +628,7 @@ def _load_dicom_series_4d(
         [float(v) for v in getattr(z_slices_sorted[0][4], "ImagePositionPatient", [0.0, 0.0, 0.0])],
         dtype=np.float64,
     )
+    slice_vec: np.ndarray
     if n_z > 1:
         ipp_second = np.array(
             [float(v) for v in getattr(z_slices_sorted[1][4], "ImagePositionPatient", [0.0, 0.0, 1.0])],
@@ -636,7 +637,7 @@ def _load_dicom_series_4d(
         slice_vec = ipp_second - ipp_first
     else:
         dz = float(getattr(ds0, "SliceThickness", 4.0))
-        slice_vec = slice_norm * dz
+        slice_vec = np.asarray(slice_norm * dz, dtype=np.float64)
 
     lps_to_ras = np.diag([-1.0, -1.0, 1.0])
     affine = np.eye(4, dtype=np.float64)
@@ -746,6 +747,7 @@ def load_dwi_volume(
 
     spatial_shape = (int(dwi_4d.shape[0]), int(dwi_4d.shape[1]), int(dwi_4d.shape[2]))
 
+    mask_3d: np.ndarray
     if mask_path is None:
         mask_3d = np.ones(spatial_shape, dtype=bool)
     elif isinstance(mask_path, (str, Path)):
