@@ -55,6 +55,7 @@ from .phantoms.dro import generate_dro
 from .phantoms.selfcheck import run_nlls_roundtrip_selfcheck, verify_continuity_limits
 from .phantoms.synthetic import FAMILIES, generate_cohort
 from .registry import DEFAULT_REGISTERED_ESTIMATORS, run_estimator
+from .reporting import export_bids_derivatives, generate_html_report
 from .runner import DEFAULT_BENCHMARK_FAMILIES, dataframe_to_markdown, run_benchmark_suite
 
 __all__ = ["build_parser", "main"]
@@ -563,6 +564,72 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit.add_argument("--json", action="store_true", help="Emit standardized machine-readable AuditReport JSON.")
     p_audit.set_defaults(func=_cmd_audit)
 
+    # 12. ivimbench report
+    p_rep = sub.add_parser(
+        "report",
+        help="Generate a standalone interactive HTML leaderboard report with inline SVGs and Gnomon badges.",
+    )
+    p_rep.add_argument(
+        "--out",
+        type=str,
+        default="ivimbench_report.html",
+        help="Output HTML file path (default: 'ivimbench_report.html').",
+    )
+    p_rep.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help="Optional existing benchmark JSON summary path; if omitted, runs a fast benchmark first.",
+    )
+    p_rep.add_argument(
+        "--protocol",
+        type=str,
+        default="osipi,acrin_6698",
+        help="Comma-separated protocols when running on-the-fly (default: 'osipi,acrin_6698').",
+    )
+    p_rep.add_argument(
+        "--estimators",
+        type=str,
+        default="segmented,crlb",
+        help="Comma-separated estimators when running on-the-fly (default: 'segmented,crlb').",
+    )
+    p_rep.add_argument("--snr", type=str, default="30", help="Comma-separated SNRs (default: '30').")
+    p_rep.add_argument("--n-voxels", type=int, default=80, help="Cohort size per task (default: 80).")
+    p_rep.add_argument("--alpha", type=float, default=0.10, help="Miscoverage rate alpha (default: 0.10).")
+    p_rep.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_rep.set_defaults(func=_cmd_report)
+
+    # 13. ivimbench export-bids
+    p_bids = sub.add_parser(
+        "export-bids",
+        help="Export BIDS-Derivatives (qMRI) NIfTI parameter maps, JSON sidecars, and QC summary.",
+    )
+    p_bids.add_argument("--subject", type=str, default="01", help="BIDS subject label without PHI (default: '01').")
+    p_bids.add_argument(
+        "--out",
+        type=str,
+        required=True,
+        help="Output BIDS derivatives root directory (e.g. './bids_derivatives/').",
+    )
+    p_bids.add_argument("--organ", type=str, default="liver", help="Synthetic DRO organ preset (default: 'liver').")
+    p_bids.add_argument("--protocol", type=str, default="osipi", help="Acquisition protocol key (default: 'osipi').")
+    p_bids.add_argument(
+        "--estimator",
+        type=str,
+        default="segmented",
+        help="Registered estimator used to fit the synthetic DRO (default: 'segmented').",
+    )
+    p_bids.add_argument("--snr", type=float, default=30.0, help="Nominal b=0 SNR (default: 30.0).")
+    p_bids.add_argument(
+        "--shape",
+        type=str,
+        default="16,16,8",
+        help="Comma-separated 2D or 3D spatial DRO shape with dims >= 8 (default: '16,16,8').",
+    )
+    p_bids.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_bids.add_argument("--json", action="store_true", help="Emit JSON manifest to stdout.")
+    p_bids.set_defaults(func=_cmd_export_bids)
+
     return parser
 
 
@@ -856,6 +923,80 @@ def _cmd_forge_ere_check(args: argparse.Namespace) -> int:
         f"{floor_rep.total_core_hours:,.1f} core-h ({floor_rep.wall_days_64_cores:.1f} d @ 64c) | "
         f"high-dose sigma = {floor_rep.estimated_high_dose_sigma_pct:.2f}% "
         f"(gate={floor_rep.ere_gate_status}, verdict={floor_rep.feasibility_verdict})"
+    )
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    if args.input:
+        payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        out_file = generate_html_report(payload, out_path=args.out)
+    else:
+        protocols = _split_csv(args.protocol)
+        estimators = _split_csv(args.estimators)
+        snrs = [float(v) for v in _split_csv(str(args.snr))]
+        bench = run_benchmark_suite(
+            estimators=estimators,
+            protocols=protocols,
+            families=("biexp", "dispersion_gamma", "triexp"),
+            snr_regimes=snrs,
+            n_voxels=int(args.n_voxels),
+            alpha=float(args.alpha),
+            n_boot=60,
+            seed=int(args.seed),
+        )
+        out_file = generate_html_report(bench, out_path=args.out)
+    print(f"Generated standalone interactive HTML report: {out_file.as_posix()}")
+    return 0
+
+
+def _cmd_export_bids(args: argparse.Namespace) -> int:
+    shape_tuple = tuple(int(v) for v in _split_csv(args.shape))
+    if len(shape_tuple) not in (2, 3):
+        raise ValueError(f"`--shape` must have 2 or 3 integer dimensions; got {args.shape!r}.")
+    dro = generate_dro(
+        shape=shape_tuple,
+        organ=args.organ,
+        protocol=args.protocol,
+        snr=float(args.snr),
+        seed=int(args.seed),
+    )
+    sig_fg, _ = dro.to_voxels(foreground_only=True)
+    pred = run_estimator(
+        args.estimator,
+        sig_fg,
+        dro.bvalues,
+        snr=float(args.snr),
+    )
+    res = export_bids_derivatives(
+        output_dir=args.out,
+        subject_id=args.subject,
+        fit_result=pred,
+        volume_meta={
+            "mask": dro.foreground_mask,
+            "shape": dro.spatial_shape,
+            "bvalues": dro.bvalues,
+            "estimation_algorithm": str(args.estimator),
+        },
+        protocol_name=args.protocol,
+    )
+    if getattr(args, "json", False):
+        manifest = {
+            "subject_id": res.subject_id,
+            "output_dir": res.output_dir.as_posix(),
+            "dataset_description": res.dataset_description.as_posix(),
+            "nifti_paths": {k: p.as_posix() for k, p in res.nifti_paths.items()},
+            "sidecar_paths": {k: p.as_posix() for k, p in res.sidecar_paths.items()},
+            "svg_summary": res.svg_summary.as_posix(),
+            "html_summary": res.html_summary.as_posix(),
+            "summary_stats": res.summary_stats,
+        }
+        print(json.dumps(manifest, indent=2))
+        return 0
+
+    print(
+        f"Exported BIDS-Derivatives qMRI dataset for sub-{res.subject_id} to: "
+        f"{res.output_dir.as_posix()} ({len(res.nifti_paths)} NIfTIs + sidecars + QC SVG/HTML)"
     )
     return 0
 

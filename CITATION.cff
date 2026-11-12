@@ -25,7 +25,7 @@ authors:
     family-names: Karlin
     email: ak5232@columbia.edu
     orcid: "https://orcid.org/0000-0003-3848-6782"
-version: "1.4.0"
+version: "1.5.0"
 date-released: "2026-11-12"
 license: MIT
 repository-code: "https://github.com/akarlin3/IVIMBench"

@@ -55,11 +55,11 @@ from ivimbench.registry import list_estimators, run_estimator
 # Part 1: License-Safe Ecosystem Bridge & Unified Pipeline
 # --------------------------------------------------------------------------- #
 def test_pyproject_license_boundary_and_version() -> None:
-    assert ivimbench.__version__ == "1.4.0"
+    assert ivimbench.__version__ == "1.5.0"
     pyproject_text = (
         Path(__file__).resolve().parents[1] / "pyproject.toml"
     ).read_text(encoding="utf-8")
-    assert 'version = "1.4.0"' in pyproject_text
+    assert 'version = "1.5.0"' in pyproject_text
     assert "nibabel>=5.0" in pyproject_text
     assert "pydicom>=2.4" in pyproject_text
     assert "conformal-ivim>=1.0.0" in pyproject_text

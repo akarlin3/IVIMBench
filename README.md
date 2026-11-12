@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![Typed: PEP 561](https://img.shields.io/badge/typing-PEP%20561-informational.svg)](src/ivimbench/py.typed)
-[![Version 1.4.0](https://img.shields.io/badge/version-1.4.0-green.svg)](pyproject.toml)
+[![Version 1.5.0](https://img.shields.io/badge/version-1.5.0-green.svg)](pyproject.toml)
 
 `IVIMBench` provides a unified, zero-PHI, purely NumPy/SciPy/Pandas benchmark platform for intravoxel incoherent motion (IVIM) and anomalous fractional-order diffusion MRI:
 
@@ -29,15 +29,17 @@ All parameters use canonical physical MRI units across the entire library: diffu
 
 ---
 
-## Architecture Overview (v1.4.0)
+## Architecture Overview (v1.5.0)
 
-1. **License-Safe `Trust -> Value -> Action` Ecosystem Bridge (`ivimbench.bridges`)** — End-to-end 4-stage quantitative spine (`run_trust_value_action_pipeline`) dynamically bridging MIT `conformal-ivim` (`ConformalIVIMEstimator` across `split`, `cqr`, and railed/interior `mondrian` modes + `DeploymentValidityMonitor`) and runtime-discovered `sextant-core` (`SextantNLLSEstimator` via `importlib.util.find_spec`, never statically linked in core MIT metadata) with deterministic pure-NumPy internal fallbacks.
-2. **Volumetric 3D/4D NIfTI & DICOM Clinical Image I/O (`ivimbench.io`)** — Affine-preserving 4D DWI & FSL `.bval` loader (`load_dwi_volume`), 3D RT-planning & viewer bundle writer (`save_parameter_maps` exporting `D_map`, `Dstar_map`, `f_map`, CI widths, `uint8` `Dstar_railed_mask`, and `exchangeability_report.json`), and `export_dro_to_nifti` with lazy `nibabel`/`pydicom` support (`ivimbench[io]`) plus a built-in pure-NumPy/gzip NIfTI-1.1 reader/writer.
-3. **`Gnomon` Clean-Room Verification Harness (`ivimbench.gnomon`)** — Publication-independent reproduce-or-refute harness (`GNOMON_TARGETS`, `run_gnomon_cleanroom_audit`) auditing open-data NLLS $D^*$ boundary-railing rates (`54.7%` target; `[52.0%, 56.4%]` clean-room window), high-$D^*$ tercile symmetric Gaussian (`Laplace-SD`, `MCMC-SD`) under-coverage vs. quantile-interval (`MCMC-quantile`, conformal) recovery, and explicit separation of `honest_crlb` (`~0.80–0.90` marginal) from `floored_railed` (`~0.30–0.67` collapsed-SD artifact).
-4. **`Forge` 1.5T MR-Linac 7 MV FFF & Electron Return Effect Physics (`ivimbench.closed_loop.ere_forge`)** — Analytical Elekta Unity-class 7 MV FFF photon spectrum (`generate_unity_7mv_fff_spectrum` with strict zero-proton contamination QA), transverse $1.5\text{ T}$ Lorentz Electron Return Effect boundary perturbation (`compute_ere_boundary_perturbation`), Monte Carlo transport floor estimation (`estimate_mc_simulation_floor`), and `apply_mr_linac_ere=True` integration inside `SyntheticTwinLoop` and `ParameterizedDoseGeometryTwin`.
-5. **Anomalous Fractional-Order Diffusion Identifiability & Recovery Wall (`ivimbench.anomalous`)** — Continuous-time random walk (CTRW) / fractional Bloch–Torrey stretched-exponential forward physics (`anomalous_signal`, `fractional_ivim_signal`, `simulate_anomalous_observations`) with exact Rician and multi-coil non-central $\chi$ magnitude noise, analytical $3 \times 3$ Fisher Information Matrix and Cramér–Rao Lower Bounds (`compute_anomalous_crlb`), and `map_recovery_collapse_wall(...)`.
-6. **Synthetic-Twin Closed-Loop Adaptive Radiotherapy Harness (`ivimbench.closed_loop`)** — Zero-scanner, 100% synthetic multi-fraction adaptive dosing simulation (`SyntheticTwinLoop`, `compare_closed_loop_policies`) modeling the 6-stage feedback cycle across `SyntheticOrganTwin` and `ParameterizedDoseGeometryTwin`.
-7. **Estimator Registry, Acquisition Design, Harnesses & Decision VoI (`ivimbench.registry`, `ivimbench.acquisition`, `ivimbench.harnesses`, `ivimbench.decision`)** — `@register_estimator` protocol, NEX-weighted Fisher CRLB schedule optimization (`optimize_b_schedule`), `MisspecificationHarness`, `RepeatabilityHarness`, threshold decision VoI (`evaluate_decision_voi`), and observable domain-shift checks (`check_domain_shift`).
+1. **Publication-Grade Diagnostic Visualization Suite (`ivimbench.vis`)** — Optional `ivimbench[vis]` (`matplotlib>=3.7`) figure generators (`plot_reliability_and_terciles`, `plot_misspecification_aliasing`, `plot_vernier_pareto_frontier`, `plot_dro_slice_montage`, plus legacy `plot_calibration_curves` and `plot_tercile_coverage`).
+2. **BIDS-Derivatives (`qMRI`) Exporter & Self-Contained HTML Leaderboard (`ivimbench.reporting`)** — Zero-dependency BIDS-qMRI NIfTI-1 derivatives writer (`export_bids_derivatives`: `sub-<id>_param-{D,Dstar,f}_dwimap.nii.gz`, `sub-<id>_desc-railed_mask.nii.gz`, JSON sidecars, and SVG/HTML QC summary) plus `generate_html_report` emitting a standalone interactive HTML report with sortable leaderboard tables, inline SVG reliability/Pareto plots, and `Gnomon` audit badges.
+3. **License-Safe `Trust -> Value -> Action` Ecosystem Bridge (`ivimbench.bridges`)** — End-to-end 4-stage quantitative spine (`run_trust_value_action_pipeline`) dynamically bridging MIT `conformal-ivim` (`ConformalIVIMEstimator` across `split`, `cqr`, and railed/interior `mondrian` modes + `DeploymentValidityMonitor`) and runtime-discovered `sextant-core` (`SextantNLLSEstimator` via `importlib.util.find_spec`, never statically linked in core MIT metadata) with deterministic pure-NumPy internal fallbacks.
+4. **Volumetric 3D/4D NIfTI & DICOM Clinical Image I/O (`ivimbench.io`)** — Affine-preserving 4D DWI & FSL `.bval` loader (`load_dwi_volume`), 3D RT-planning & viewer bundle writer (`save_parameter_maps` exporting `D_map`, `Dstar_map`, `f_map`, CI widths, `uint8` `Dstar_railed_mask`, and `exchangeability_report.json`), and `export_dro_to_nifti` with lazy `nibabel`/`pydicom` support (`ivimbench[io]`) plus a built-in pure-NumPy/gzip NIfTI-1.1 reader/writer.
+5. **`Gnomon` Clean-Room Verification Harness (`ivimbench.gnomon`)** — Publication-independent reproduce-or-refute harness (`GNOMON_TARGETS`, `run_gnomon_cleanroom_audit`) auditing open-data NLLS $D^*$ boundary-railing rates (`54.7%` target; `[52.0%, 56.4%]` clean-room window), high-$D^*$ tercile symmetric Gaussian (`Laplace-SD`, `MCMC-SD`) under-coverage vs. quantile-interval (`MCMC-quantile`, conformal) recovery, and explicit separation of `honest_crlb` (`~0.80–0.90` marginal) from `floored_railed` (`~0.30–0.67` collapsed-SD artifact).
+6. **`Forge` 1.5T MR-Linac 7 MV FFF & Electron Return Effect Physics (`ivimbench.closed_loop.ere_forge`)** — Analytical Elekta Unity-class 7 MV FFF photon spectrum (`generate_unity_7mv_fff_spectrum` with strict zero-proton contamination QA), transverse $1.5\text{ T}$ Lorentz Electron Return Effect boundary perturbation (`compute_ere_boundary_perturbation`), Monte Carlo transport floor estimation (`estimate_mc_simulation_floor`), and `apply_mr_linac_ere=True` integration inside `SyntheticTwinLoop` and `ParameterizedDoseGeometryTwin`.
+7. **Anomalous Fractional-Order Diffusion Identifiability & Recovery Wall (`ivimbench.anomalous`)** — Continuous-time random walk (CTRW) / fractional Bloch–Torrey stretched-exponential forward physics (`anomalous_signal`, `fractional_ivim_signal`, `simulate_anomalous_observations`) with exact Rician and multi-coil non-central $\chi$ magnitude noise, analytical $3 \times 3$ Fisher Information Matrix and Cramér–Rao Lower Bounds (`compute_anomalous_crlb`), and `map_recovery_collapse_wall(...)`.
+8. **Synthetic-Twin Closed-Loop Adaptive Radiotherapy Harness (`ivimbench.closed_loop`)** — Zero-scanner, 100% synthetic multi-fraction adaptive dosing simulation (`SyntheticTwinLoop`, `compare_closed_loop_policies`) modeling the 6-stage feedback cycle across `SyntheticOrganTwin` and `ParameterizedDoseGeometryTwin`.
+9. **Estimator Registry, Acquisition Design, Harnesses & Decision VoI (`ivimbench.registry`, `ivimbench.acquisition`, `ivimbench.harnesses`, `ivimbench.decision`)** — `@register_estimator` protocol, NEX-weighted Fisher CRLB schedule optimization (`optimize_b_schedule`), `MisspecificationHarness`, `RepeatabilityHarness`, threshold decision VoI (`evaluate_decision_voi`), and observable domain-shift checks (`check_domain_shift`).
 
 ---
 
@@ -56,7 +58,7 @@ pip install "ivimbench[io]"
 # Optional MIT conformal-ivim ecosystem bridge:
 pip install "ivimbench[ecosystem]"
 
-# Optional matplotlib/seaborn diagnostic plotting extras:
+# Optional matplotlib>=3.7/seaborn publication figure suite:
 pip install "ivimbench[vis]"
 
 # Optional PyTorch baselines (IVIMNetBaseline, HeteroscedasticQuantileMLP, MAFPosteriorEstimator):
@@ -80,35 +82,41 @@ ivimbench selfcheck
 `IVIMBench` installs the `ivimbench` console script for immediate reproducible benchmarking:
 
 ```bash
-# 1. Unified 4-stage `Trust -> Value -> Action` pipeline (DRO -> Fit/Railing -> CQR/Shift -> VoI -> RT Loop)
+# 1. Generate standalone interactive HTML leaderboard report with inline SVGs & Gnomon badges
+ivimbench report --out ./benchmark_report.html
+
+# 2. Export BIDS-Derivatives (qMRI) NIfTI parameter maps, JSON sidecars & QC summary
+ivimbench export-bids --subject 01 --out ./bids_derivatives/
+
+# 3. Unified 4-stage `Trust -> Value -> Action` pipeline (DRO -> Fit/Railing -> CQR/Shift -> VoI -> RT Loop)
 ivimbench pipeline --organ pancreas --protocol osipi --conformal cqr --fractions 5
 
-# 2. Volumetric 3D/4D NIfTI/DICOM fitting & RT-planning parameter/uncertainty/railed-mask export
+# 4. Volumetric 3D/4D NIfTI/DICOM fitting & RT-planning parameter/uncertainty/railed-mask export
 ivimbench fit-volume --demo-volume --out results/vol_demo/
 ivimbench fit-volume --dwi scan.nii.gz --bval scan.bval --mask roi.nii.gz --out results/maps/
 
-# 3. Clean-room `Gnomon` reproduce-or-refute audit across pinned IVIM uncertainty targets
+# 5. Clean-room `Gnomon` reproduce-or-refute audit across pinned IVIM uncertainty targets
 ivimbench reproduce-gnomon
 
-# 4. `Forge` 1.5T MR-Linac 7 MV FFF photon purity, Lorentz ERE hotspot & MC floor QA check
+# 6. `Forge` 1.5T MR-Linac 7 MV FFF photon purity, Lorentz ERE hotspot & MC floor QA check
 ivimbench forge-ere-check
 
-# 5. Clean-room continuity-limit residual & noiseless bi-exponential NLLS round-trip self-check
+# 7. Clean-room continuity-limit residual & noiseless bi-exponential NLLS round-trip self-check
 ivimbench selfcheck
 
-# 6. Fast (<10s) end-to-end synthetic DRO + multi-family calibration, repeatability & VoI smoke benchmark
+# 8. Fast (<10s) end-to-end synthetic DRO + multi-family calibration, repeatability & VoI smoke benchmark
 ivimbench demo
 
-# 7. Multi-task benchmark across all 5 forward families, exporting Markdown, JSON, LaTeX & CSV tables
+# 9. Multi-task benchmark across all 5 forward families, exporting Markdown, JSON, LaTeX & CSV tables
 ivimbench benchmark --protocol osipi --snr 30 --out results/
 
-# 8. Compare fixed clinical schedules (and optional CRLB/calibration-optimized designs)
+# 10. Compare fixed clinical schedules (and optional CRLB/calibration-optimized designs)
 ivimbench compare-schemes --schemes osipi,acrin_6698 --include-optimized
 
-# 9. Print terminal summary table of the fractional anomalous diffusion alpha recovery wall
+# 11. Print terminal summary table of the fractional anomalous diffusion alpha recovery wall
 ivimbench anomalous-wall --protocol osipi --snr-min 10 --snr-max 80
 
-# 10. Run a 5-fraction synthetic-twin closed-loop adaptive RT harness (with optional `--ere` 1.5T mode)
+# 12. Run a 5-fraction synthetic-twin closed-loop adaptive RT harness (with optional `--ere` 1.5T mode)
 ivimbench closed-loop --fractions 5 --snr 30 --ere
 ```
 
@@ -372,6 +380,55 @@ print(f"Peak 1.5T water->air exit hotspot: +{ere.peak_exit_enhancement_pct:.2f}%
 
 ---
 
+## Quickstart 5: Publication Figures (`[vis]`), BIDS-Derivatives (`qMRI`) & HTML Leaderboard
+
+```python
+from ivimbench import (
+    SchemeEvaluator,
+    evaluate_misspecification,
+    export_bids_derivatives,
+    generate_cohort,
+    generate_dro,
+    generate_html_report,
+    plot_dro_slice_montage,
+    plot_misspecification_aliasing,
+    plot_reliability_and_terciles,
+    plot_vernier_pareto_frontier,
+    run_benchmark_suite,
+    run_estimator,
+)
+
+# 1. Publication diagnostic figures (pip install "ivimbench[vis]")
+cohort = generate_cohort(protocol="osipi", organ="liver", n_voxels=300, snr=30.0, seed=42)
+plot_reliability_and_terciles(cohort, out_path="figures/reliability_terciles.png")
+
+misspec = evaluate_misspecification(estimators=["segmented", "crlb"], protocol="osipi", snr=30.0)
+plot_misspecification_aliasing(misspec, out_path="figures/misspec_aliasing.png")
+
+schemes = SchemeEvaluator(organ="liver", snr=30.0).compare(["osipi", "acrin_6698"], include_optimized=True)
+plot_vernier_pareto_frontier(schemes, out_path="figures/vernier_pareto.png")
+
+dro = generate_dro(shape=(32, 32, 8), organ="pancreas", protocol="osipi", snr=30.0, seed=42)
+plot_dro_slice_montage(dro, out_path="figures/dro_montage.png")
+
+# 2. BIDS-Derivatives (qMRI) NIfTI-1 + JSON sidecars + SVG/HTML QC summary (zero external deps)
+sig_fg, _ = dro.to_voxels(foreground_only=True)
+fit_res = run_estimator("segmented", sig_fg, dro.bvalues, snr=30.0)
+export_bids_derivatives(
+    output_dir="./bids_derivatives",
+    subject_id="01",
+    fit_result=fit_res,
+    volume_meta={"mask": dro.foreground_mask, "shape": dro.spatial_shape, "bvalues": dro.bvalues},
+    protocol_name="osipi",
+)
+
+# 3. Standalone interactive HTML leaderboard with Gnomon audit badges & inline SVGs
+bench = run_benchmark_suite(estimators=["segmented", "crlb"], protocols=["osipi", "acrin_6698"])
+generate_html_report(bench, out_path="ivimbench_report.html")
+```
+
+---
+
 ## Repository Structure
 
 ```text
@@ -379,7 +436,7 @@ IVIMBench/
 ├── .github/workflows/
 │   ├── ci.yml                              # Ruff, Mypy, Pytest & CLI smoke matrix (Python 3.10–3.12)
 │   └── publish.yml                         # Tagged wheel/sdist build, Twine check & GitHub Release upload
-├── pyproject.toml                          # PEP 621 metadata, optional `[io]`, `[ecosystem]`, `[torch]` extras
+├── pyproject.toml                          # PEP 621 metadata, optional `[io]`, `[ecosystem]`, `[vis]`, `[torch]` extras
 ├── README.md
 ├── LICENSE
 ├── CITATION.cff
@@ -387,13 +444,12 @@ IVIMBench/
 │   ├── __init__.py
 │   ├── _version.py
 │   ├── py.typed                            # PEP 561 typed package marker
-│   ├── cli.py                              # `ivimbench` CLI (`pipeline`, `fit-volume`, `reproduce-gnomon`, `forge-ere-check`, ...)
+│   ├── cli.py                              # `ivimbench` CLI (`report`, `export-bids`, `pipeline`, `fit-volume`, `reproduce-gnomon`, ...)
 │   ├── osipi.py                            # Network-isolated MD5-verified OSIPI TF2.4 Zenodo DRO fetcher
 │   ├── registry.py                         # `@register_estimator` protocol & built-in registrations
 │   ├── runner.py                           # Multi-task runner + Markdown/JSON/LaTeX/CSV exporters
 │   ├── protocols.py                        # Clinical b-schedules (OSIPI TF2.4, TCGA-LIHC, ACRIN 6698)
 │   ├── evaluate.py                         # Core BenchmarkSuite & BenchmarkReport (`sd_convention` aware)
-│   ├── vis.py                              # Calibration curves & D*-tercile bar plots
 │   ├── bridges/
 │   │   ├── __init__.py
 │   │   └── avery_stack.py                  # License-safe `ConformalIVIMEstimator`, `SextantNLLSEstimator` & 4-stage pipeline
@@ -404,6 +460,14 @@ IVIMBench/
 │   │   ├── __init__.py
 │   │   ├── manifest.py                     # Frozen `GNOMON_TARGETS` verification manifest
 │   │   └── reproduce.py                    # Clean-room NLLS/CRLB/Laplace/MCMC/conformal audit harness
+│   ├── vis/                                # Publication figure suite (`ivimbench[vis]`, `matplotlib>=3.7`)
+│   │   ├── __init__.py
+│   │   ├── calibration.py                  # Reliability curves & `plot_reliability_and_terciles`
+│   │   └── publication.py                  # Misspec aliasing, Vernier Pareto frontier & DRO slice montage
+│   ├── reporting/                          # Zero-dependency BIDS-qMRI NIfTI exporter & HTML leaderboard
+│   │   ├── __init__.py
+│   │   ├── bids.py                         # `export_bids_derivatives` + pure-NumPy NIfTI-1 I/O
+│   │   └── html_report.py                  # `generate_html_report` + Gnomon audit badges & inline SVGs
 │   ├── anomalous/
 │   │   ├── __init__.py
 │   │   └── wall.py                         # CTRW stretched-exp physics, 3x3 Fisher CRLB & collapse wall
@@ -441,7 +505,8 @@ IVIMBench/
     ├── test_phantoms.py
     ├── test_protocols.py
     ├── test_registry_and_runner.py
-    └── test_selfcheck_and_conventions.py
+    ├── test_selfcheck_and_conventions.py
+    └── test_vis_bids_html.py
 ```
 
 ---

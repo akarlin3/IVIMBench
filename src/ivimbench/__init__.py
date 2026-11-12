@@ -17,7 +17,9 @@ from . import (
     phantoms,
     protocols,
     registry,
+    reporting,
     runner,
+    vis,
 )
 from ._version import __version__
 from .acquisition import (
@@ -141,8 +143,23 @@ from .registry import (
     run_estimator,
     unregister_estimator,
 )
+from .reporting import (
+    BIDSExportResult,
+    compute_gnomon_audit_badges,
+    export_bids_derivatives,
+    generate_html_report,
+    read_nifti1,
+    write_nifti1,
+)
 from .runner import MultiTaskBenchmarkResult, run_benchmark_suite
-from .vis import plot_calibration_curves, plot_tercile_coverage
+from .vis import (
+    plot_calibration_curves,
+    plot_dro_slice_montage,
+    plot_misspecification_aliasing,
+    plot_reliability_and_terciles,
+    plot_tercile_coverage,
+    plot_vernier_pareto_frontier,
+)
 
 __all__ = [
     "__version__",
@@ -254,6 +271,16 @@ __all__ = [
     "evaluate_decision_voi",
     "plot_calibration_curves",
     "plot_tercile_coverage",
+    "plot_reliability_and_terciles",
+    "plot_misspecification_aliasing",
+    "plot_vernier_pareto_frontier",
+    "plot_dro_slice_montage",
+    "BIDSExportResult",
+    "write_nifti1",
+    "read_nifti1",
+    "export_bids_derivatives",
+    "compute_gnomon_audit_badges",
+    "generate_html_report",
     "phantoms",
     "osipi",
     "protocols",
@@ -272,6 +299,8 @@ __all__ = [
     "harnesses",
     "decision",
     "registry",
+    "reporting",
     "runner",
+    "vis",
     "cli",
 ]

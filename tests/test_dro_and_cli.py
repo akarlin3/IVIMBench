@@ -98,14 +98,14 @@ def test_cli_demo_benchmark_and_compare_schemes(
     out_demo = capsys.readouterr().out
     assert rc_demo == 0
     assert elapsed < 10.0
-    assert "IVIMBench v1.4.0" in out_demo
+    assert "IVIMBench v1.5.0" in out_demo
     assert "pancreas" in out_demo and "breast" in out_demo
 
     # JSON output mode for ivimbench demo
     rc_json = cli_main(["demo", "--n-voxels", "40", "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert rc_json == 0
-    assert payload["version"] == "1.4.0"
+    assert payload["version"] == "1.5.0"
     assert payload["domain_shift"]["is_stale"] is True
 
     # 2. ivimbench benchmark --protocol osipi --snr 30 --out results/

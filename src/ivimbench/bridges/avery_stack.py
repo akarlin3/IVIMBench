@@ -407,7 +407,10 @@ class ConformalIVIMEstimator:
                 alpha=eff_alpha,
                 method=base_method,
                 b=b_arr,
-                clip_bounds=[(self.bounds[n][0], self.bounds[n][1]) for n in PARAM_NAMES],
+                clip_bounds=tuple(
+                    (float(self.bounds[n][0]), float(self.bounds[n][1]))
+                    for n in PARAM_NAMES
+                ),
                 random_state=self.seed,
             )
             model.fit(x_tr, y_tr)
