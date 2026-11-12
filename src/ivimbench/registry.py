@@ -724,5 +724,6 @@ def _builtin_crlb_estimator(
     }
 
 
-# Trigger conditional @register_estimator("maf") when optional ivimbench[torch] is installed
+# Trigger neural/flow baseline registrations (core remains 100% torch-free)
 from .baselines import maf as _maf  # noqa: E402, F401
+from .baselines import neural as _neural  # noqa: E402, F401

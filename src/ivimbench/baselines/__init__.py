@@ -1,4 +1,4 @@
-"""Standard reference IVIM estimators: NLLS, Two-Step Segmented, CRLB Normal, MLP, and MAF."""
+"""Standard reference IVIM estimators: NLLS, Segmented, CRLB, MLP, MAF, IVIMNet, and Quantile MLP."""
 
 from .crlb_estimator import (
     CRLBEstimator,
@@ -8,6 +8,7 @@ from .crlb_estimator import (
 )
 from .maf import MAFPosterior, MAFPosteriorEstimator
 from .mlp import MLPEstimator, MLPIVIMEstimator
+from .neural import HeteroscedasticQuantileMLP, IVIMNetBaseline
 from .nlls import NLLSEstimator, NLLSFitResult, NLLSIVIMEstimator
 from .segmented import SegmentedEstimator, SegmentedFitResult, SegmentedIVIMEstimator
 
@@ -26,4 +27,6 @@ __all__ = [
     "MLPIVIMEstimator",
     "MAFPosteriorEstimator",
     "MAFPosterior",
+    "IVIMNetBaseline",
+    "HeteroscedasticQuantileMLP",
 ]

@@ -9,6 +9,10 @@ Supports:
   runner exporting reproducible Markdown, JSON, and LaTeX summary tables.
 - ``ivimbench compare-schemes --schemes osipi,acrin_6698``: Acquisition-design
   and CRLB/calibration comparison across diffusion schedules.
+- ``ivimbench anomalous-wall --protocol osipi --snr-min 10 --snr-max 80``:
+  Fractional-order anomalous diffusion ``(D, alpha)`` CRLB and NLLS collapse wall.
+- ``ivimbench closed-loop --fractions 5 --snr 30``: Multi-fraction synthetic-twin
+  adaptive radiotherapy harness comparing uncalibrated NLLS vs. conformal intervals.
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ import numpy as np
 
 from ._version import __version__
 from .acquisition.design import SchemeEvaluator
+from .anomalous.wall import map_recovery_collapse_wall
+from .closed_loop.loop import compare_closed_loop_policies
 from .decision.voi import check_domain_shift, evaluate_decision_voi
 from .harnesses.repeatability import evaluate_repeatability, simulate_scan_rescan
 from .phantoms.dro import generate_dro
@@ -384,7 +390,152 @@ def build_parser() -> argparse.ArgumentParser:
     p_comp.add_argument("--out", type=str, default=None, help="Optional output directory for comparison tables.")
     p_comp.set_defaults(func=_cmd_compare_schemes)
 
+    # 5. ivimbench anomalous-wall
+    p_wall = sub.add_parser(
+        "anomalous-wall",
+        help="Map the fractional-order anomalous diffusion (D, alpha) CRLB and NLLS collapse wall.",
+    )
+    p_wall.add_argument(
+        "--protocol",
+        type=str,
+        default="osipi",
+        help="Comma-separated protocol keys (default: 'osipi').",
+    )
+    p_wall.add_argument("--snr-min", type=float, default=10.0, help="Minimum SNR on grid (default: 10.0).")
+    p_wall.add_argument("--snr-max", type=float, default=80.0, help="Maximum SNR on grid (default: 80.0).")
+    p_wall.add_argument("--n-snr", type=int, default=5, help="Number of SNR grid points (default: 5).")
+    p_wall.add_argument(
+        "--alphas",
+        type=str,
+        default="0.55,0.75,0.90,1.0",
+        help="Comma-separated fractional orders alpha in (0, 1] (default: '0.55,0.75,0.90,1.0').",
+    )
+    p_wall.add_argument(
+        "--n-replicates",
+        type=int,
+        default=36,
+        help="Monte Carlo NLLS replicates per grid cell (default: 36).",
+    )
+    p_wall.add_argument("--n-boot", type=int, default=250, help="Bootstrap resamples for 95%% CIs (default: 250).")
+    p_wall.add_argument(
+        "--noise-type",
+        type=str,
+        default="rician",
+        help="Magnitude noise model ('rician' or 'noncentral_chi', default: 'rician').",
+    )
+    p_wall.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_wall.add_argument("--out", type=str, default=None, help="Optional output directory for wall artifacts.")
+    p_wall.add_argument("--json", action="store_true", help="Emit structured JSON instead of tables.")
+    p_wall.set_defaults(func=_cmd_anomalous_wall)
+
+    # 6. ivimbench closed-loop
+    p_loop = sub.add_parser(
+        "closed-loop",
+        help="Run a synthetic-twin closed-loop adaptive radiotherapy simulation comparing uncalibrated vs. conformal UQ.",
+    )
+    p_loop.add_argument("--fractions", type=int, default=5, help="Number of RT fractions K (default: 5).")
+    p_loop.add_argument("--snr", type=float, default=30.0, help="Nominal b=0 DWI SNR (default: 30.0).")
+    p_loop.add_argument("--protocol", type=str, default="osipi", help="Acquisition protocol key (default: 'osipi').")
+    p_loop.add_argument(
+        "--substrate",
+        type=str,
+        default="organ",
+        choices=("organ", "dose_geometry"),
+        help="Synthetic twin geometry substrate ('organ' or 'dose_geometry', default: 'organ').",
+    )
+    p_loop.add_argument("--estimator", type=str, default="crlb", help="Registered estimator name (default: 'crlb').")
+    p_loop.add_argument("--alpha", type=float, default=0.10, help="Miscoverage rate alpha (default: 0.10).")
+    p_loop.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_loop.add_argument("--out", type=str, default=None, help="Optional output directory for loop artifacts.")
+    p_loop.add_argument("--json", action="store_true", help="Emit structured JSON instead of tables.")
+    p_loop.set_defaults(func=_cmd_closed_loop)
+
     return parser
+
+
+def _cmd_anomalous_wall(args: argparse.Namespace) -> int:
+    protocols = _split_csv(args.protocol)
+    snr_min = float(args.snr_min)
+    snr_max = float(args.snr_max)
+    if snr_min <= 0.0 or snr_max < snr_min:
+        raise ValueError(f"Require 0 < snr_min <= snr_max; got ({snr_min}, {snr_max}).")
+    snr_grid = np.linspace(snr_min, snr_max, max(int(args.n_snr), 2))
+    alpha_grid = [float(v) for v in _split_csv(args.alphas)]
+
+    report = map_recovery_collapse_wall(
+        b_schedules=protocols,
+        snr_grid=snr_grid,
+        alpha_grid=alpha_grid,
+        seed=int(args.seed),
+        n_replicates=int(args.n_replicates),
+        noise_type=args.noise_type,
+        n_boot=int(args.n_boot),
+    )
+
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "anomalous_wall.md").write_text(report.to_markdown() + "\n", encoding="utf-8")
+        (out_dir / "anomalous_wall.json").write_text(report.to_json() + "\n", encoding="utf-8")
+        (out_dir / "anomalous_wall.tex").write_text(report.to_latex() + "\n", encoding="utf-8")
+        report.dataframe.to_csv(out_dir / "anomalous_wall_records.csv", index=False)
+
+    if getattr(args, "json", False):
+        print(report.to_json())
+        return 0
+
+    print(
+        f"=== IVIMBench v{__version__} Anomalous Fractional-Order Diffusion Recovery Wall ===\n"
+    )
+    print(report.to_markdown())
+    print("\n[Collapse Wall Frontier (SNR x b_max)]")
+    print(dataframe_to_markdown(report.wall_front, float_fmt=".3f"))
+    if args.out:
+        print(f"\nSaved anomalous wall artifacts to: {Path(args.out).as_posix()}")
+    return 0
+
+
+def _cmd_closed_loop(args: argparse.Namespace) -> int:
+    substrate_mode = "organ" if args.substrate == "organ" else "dose_geometry"
+    report = compare_closed_loop_policies(
+        substrate=substrate_mode,  # type: ignore[arg-type]
+        protocol=args.protocol,
+        estimator=args.estimator,
+        n_fractions=int(args.fractions),
+        snr=float(args.snr),
+        alpha=float(args.alpha),
+        seed=int(args.seed),
+    )
+
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "closed_loop_summary.md").write_text(report.to_markdown() + "\n", encoding="utf-8")
+        (out_dir / "closed_loop_summary.json").write_text(report.to_json() + "\n", encoding="utf-8")
+        (out_dir / "closed_loop_summary.tex").write_text(report.to_latex() + "\n", encoding="utf-8")
+        report.policy_df.to_csv(out_dir / "closed_loop_policies.csv", index=False)
+
+    if getattr(args, "json", False):
+        print(report.to_json())
+        return 0
+
+    print(
+        f"=== IVIMBench v{__version__} Closed-Loop Synthetic-Twin Adaptive RT "
+        f"(K={int(args.fractions)}, SNR={float(args.snr):.1f}, substrate={args.substrate}) ===\n"
+    )
+    print("[Policy Outcome & Dose-Safety Summary]")
+    print(report.to_markdown())
+    print(
+        f"\n  - Regret Reduction (Uncalibrated -> Conformal): "
+        f"{report.summary['regret_reduction']:+.4f}\n"
+        f"  - False-Escalation Reduction: "
+        f"{report.summary['false_escalation_reduction']:+.4f}\n"
+        f"  - Cumulative OAR Dose Sparing vs. Uncalibrated: "
+        f"{report.summary['conformal_oar_sparing_vs_uncalibrated_gy']:+.4f} Gy"
+    )
+    if args.out:
+        print(f"\nSaved closed-loop artifacts to: {Path(args.out).as_posix()}")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
