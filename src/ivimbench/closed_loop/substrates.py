@@ -29,6 +29,7 @@ from ..phantoms.synthetic import (
     ivim_biexp,
 )
 from ..protocols import AcquisitionProtocol, resolve_bvalues
+from .ere_forge import EREBoundaryPerturbation, compute_ere_boundary_perturbation
 
 __all__ = [
     "TwinScan",
@@ -75,6 +76,11 @@ class BaseTwinSubstrate:
     S0_map: np.ndarray
     viable_cell_fraction: np.ndarray
     cumulative_dose_map: np.ndarray
+    density_map: np.ndarray
+    apply_mr_linac_ere: bool = False
+    b_field_tesla: float = 1.5
+    ere_beam_axis: int = 0
+    last_ere_perturbation: EREBoundaryPerturbation | None = None
 
     _init_D_map: np.ndarray
     _init_Dstar_map: np.ndarray
@@ -90,8 +96,11 @@ class BaseTwinSubstrate:
         self._init_Dstar_map = self.Dstar_map.copy()
         self._init_f_map = self.f_map.copy()
         self._init_S0_map = self.S0_map.copy()
+        if not hasattr(self, "density_map"):
+            self.density_map = np.where(self.foreground_mask, 1.0, 0.0012).astype(np.float64)
         self.viable_cell_fraction = np.where(self.foreground_mask, 1.0, 0.0).astype(np.float64)
         self.cumulative_dose_map = np.zeros(self.shape, dtype=np.float64)
+        self.last_ere_perturbation = None
 
     def reset(self) -> BaseTwinSubstrate:
         """Reset longitudinal tissue physiology, clonogenic survival, and delivered dose to t=0."""
@@ -101,6 +110,7 @@ class BaseTwinSubstrate:
         self.S0_map = self._init_S0_map.copy()
         self.viable_cell_fraction = np.where(self.foreground_mask, 1.0, 0.0).astype(np.float64)
         self.cumulative_dose_map = np.zeros(self.shape, dtype=np.float64)
+        self.last_ere_perturbation = None
         return self
 
     @property
@@ -206,8 +216,10 @@ class BaseTwinSubstrate:
         deescalate_factor: float = 0.85,
         dose_spill_sigma: float = 1.15,
         oar_max_fraction_gy: float | None = None,
+        apply_mr_linac_ere: bool | None = None,
+        b_field_tesla: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute spatial delivered fraction dose with realistic penumbra spill into adjacent OAR/tissue."""
+        """Compute spatial delivered fraction dose with realistic penumbra spill and optional 1.5T ERE."""
         fg = self.foreground_mask
         esc = np.asarray(escalate_fg_mask, dtype=bool).ravel()
         if esc.size != int(np.sum(fg)):
@@ -231,6 +243,38 @@ class BaseTwinSubstrate:
             delta_spatial = gaussian_filter(delta_spatial, sigma=float(dose_spill_sigma), mode="nearest")
 
         delivered = np.maximum(nom + delta_spatial, 0.0) * fg.astype(np.float64)
+
+        use_ere = self.apply_mr_linac_ere if apply_mr_linac_ere is None else bool(apply_mr_linac_ere)
+        if use_ere:
+            b_tesla = self.b_field_tesla if b_field_tesla is None else float(b_field_tesla)
+            dens = getattr(
+                self,
+                "density_map",
+                np.where(fg, 1.0, 0.0012).astype(np.float64),
+            )
+            if delivered.ndim == 2:
+                ax_use = int(self.ere_beam_axis) % 2
+                ere_res = compute_ere_boundary_perturbation(
+                    delivered[:, :, None],
+                    dens[:, :, None],
+                    b_field_tesla=b_tesla,
+                    beam_axis=ax_use,
+                )
+                self.last_ere_perturbation = ere_res
+                delivered = ere_res.perturbed_dose[:, :, 0] * fg.astype(np.float64)
+            else:
+                ax_use = int(self.ere_beam_axis) % 3
+                ere_res = compute_ere_boundary_perturbation(
+                    delivered,
+                    dens,
+                    b_field_tesla=b_tesla,
+                    beam_axis=ax_use,
+                )
+                self.last_ere_perturbation = ere_res
+                delivered = ere_res.perturbed_dose * fg.astype(np.float64)
+        else:
+            self.last_ere_perturbation = None
+
         if oar_max_fraction_gy is not None and np.any(self.oar_mask):
             oar_excess = np.maximum(delivered[self.oar_mask] - float(oar_max_fraction_gy), 0.0)
             if float(np.max(oar_excess)) > 0.0:
@@ -328,6 +372,10 @@ class SyntheticOrganTwin(BaseTwinSubstrate):
         organ: str = "pancreas",
         nominal_tumor_dose_gy: float = 2.0,
         oar_falloff_sigma: float = 2.0,
+        apply_mr_linac_ere: bool = False,
+        b_field_tesla: float = 1.5,
+        ere_beam_axis: int = 0,
+        density_map: np.ndarray | None = None,
         seed: int = DEFAULT_SEED,
     ) -> None:
         shp = tuple(int(s) for s in shape)
@@ -336,6 +384,9 @@ class SyntheticOrganTwin(BaseTwinSubstrate):
         self.shape = shp
         self.organ = organ
         self.seed = int(seed)
+        self.apply_mr_linac_ere = bool(apply_mr_linac_ere)
+        self.b_field_tesla = float(b_field_tesla)
+        self.ere_beam_axis = int(ere_beam_axis)
 
         rng = np.random.Generator(np.random.PCG64(self.seed))
         prior = get_organ_prior(organ)
@@ -414,6 +465,19 @@ class SyntheticOrganTwin(BaseTwinSubstrate):
         self.f_map = np.where(fg, f_map, 0.0)
         self.S0_map = np.where(fg, s0_map, 0.0)
 
+        if density_map is not None:
+            d_rho = np.asarray(density_map, dtype=np.float64)
+            if d_rho.shape != shp:
+                raise ValueError(f"`density_map` shape {d_rho.shape} != substrate shape {shp}.")
+            self.density_map = d_rho.copy()
+        else:
+            # Soft tissue (1.0 g/cm^3) with central hollow-viscus luminal gas pocket (0.0012 g/cm^3)
+            # inside the adjacent OAR plus external air cavity outside the organ contour.
+            lumen_pocket = oar & (dist_oar <= 0.11)
+            d_rho = np.where(fg, 1.0, 0.0012).astype(np.float64)
+            d_rho = np.where(lumen_pocket, 0.0012, d_rho)
+            self.density_map = d_rho
+
         # Nominal baseline conformal radiotherapy dose plan (prescribed to tumor with penumbra falloff)
         rx_target = np.where(tumor, float(nominal_tumor_dose_gy), 0.0)
         falloff = gaussian_filter(rx_target, sigma=float(oar_falloff_sigma), mode="constant")
@@ -444,9 +508,16 @@ class ParameterizedDoseGeometryTwin(BaseTwinSubstrate):
         oar_mask: np.ndarray | None = None,
         target_isodose_frac: float = 0.72,
         oar_isodose_band: tuple[float, float] = (0.20, 0.72),
+        apply_mr_linac_ere: bool = False,
+        b_field_tesla: float = 1.5,
+        ere_beam_axis: int = 0,
+        density_map: np.ndarray | None = None,
         seed: int = DEFAULT_SEED,
     ) -> None:
         self.seed = int(seed)
+        self.apply_mr_linac_ere = bool(apply_mr_linac_ere)
+        self.b_field_tesla = float(b_field_tesla)
+        self.ere_beam_axis = int(ere_beam_axis)
         rng = np.random.Generator(np.random.PCG64(self.seed))
 
         if dose_grid is None:
@@ -499,6 +570,19 @@ class ParameterizedDoseGeometryTwin(BaseTwinSubstrate):
         self.oar_mask = o_mask
         self.parenchyma_mask = fg & (~t_mask) & (~o_mask)
         self.nominal_fraction_dose_map = d_grid.copy()
+
+        if density_map is not None:
+            d_rho = np.asarray(density_map, dtype=np.float64)
+            if d_rho.shape != shp:
+                raise ValueError(f"`density_map` shape {d_rho.shape} != substrate shape {shp}.")
+            self.density_map = d_rho.copy()
+        else:
+            d_rho = np.where(fg, 1.0, 0.0012).astype(np.float64)
+            # Provide lung/low-density outer parenchyma shell (0.26 g/cm^3) so all-ones masks
+            # still model realistic thoracic/luminal 1.5T ERE density interfaces.
+            if np.any(self.parenchyma_mask):
+                d_rho = np.where(self.parenchyma_mask, 0.26, d_rho)
+            self.density_map = d_rho
 
         # Parameterize baseline physiology directly along normalized isodose shells (no anatomical blobs):
         # Inner peak-isodose core contains hypoxic subvolume (low f ~ 0.055), transitioning across

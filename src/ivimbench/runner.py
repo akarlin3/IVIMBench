@@ -138,6 +138,8 @@ def _sanitize_json(obj: Any) -> Any:
         return {str(k): _sanitize_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_sanitize_json(v) for v in obj]
+    if isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
     if isinstance(obj, (np.integer, int)):
         return int(obj)
     if isinstance(obj, (np.floating, float)):

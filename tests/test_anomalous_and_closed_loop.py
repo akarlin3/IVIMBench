@@ -37,8 +37,8 @@ from ivimbench.metrics.coverage import empirical_coverage
 from ivimbench.phantoms.synthetic import generate_cohort, ivim_biexp
 
 
-def test_version_is_1_3_0() -> None:
-    assert __version__ == "1.3.0"
+def test_version_is_current() -> None:
+    assert __version__ == "1.4.0"
 
 
 def test_anomalous_jacobian_central_differences_and_adc_reduction() -> None:

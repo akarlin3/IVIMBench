@@ -1,5 +1,16 @@
 """Zero-scanner synthetic-twin closed-loop adaptive radiotherapy harness."""
 
+from .ere_forge import (
+    UNITY_ERE_REFERENCE_BAND_PCT,
+    UNITY_ERE_TOLERANCE_PCT,
+    EREBoundaryPerturbation,
+    MCSimulationFloorReport,
+    UnityPhotonSpectrum,
+    compute_ere_boundary_perturbation,
+    estimate_mc_simulation_floor,
+    generate_unity_7mv_fff_spectrum,
+    verify_photon_beam_purity,
+)
 from .loop import (
     ClosedLoopComparisonReport,
     ClosedLoopResult,
@@ -24,4 +35,13 @@ __all__ = [
     "ClosedLoopComparisonReport",
     "SyntheticTwinLoop",
     "compare_closed_loop_policies",
+    "UNITY_ERE_REFERENCE_BAND_PCT",
+    "UNITY_ERE_TOLERANCE_PCT",
+    "UnityPhotonSpectrum",
+    "EREBoundaryPerturbation",
+    "MCSimulationFloorReport",
+    "generate_unity_7mv_fff_spectrum",
+    "verify_photon_beam_purity",
+    "compute_ere_boundary_perturbation",
+    "estimate_mc_simulation_floor",
 ]

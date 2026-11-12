@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ivimbench"
-version = "1.3.0"
+version = "1.4.0"
 description = "Extensible quantitative-MRI uncertainty, acquisition-design, repeatability, and clinical decision-utility benchmark suite for IVIM diffusion MRI"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -29,6 +29,8 @@ keywords = [
     "value of information",
     "repeatability",
     "OSIPI",
+    "MR-Linac",
+    "NIfTI",
     "benchmark",
 ]
 classifiers = [
@@ -52,6 +54,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+io = [
+    "nibabel>=5.0",
+    "pydicom>=2.4",
+]
+ecosystem = [
+    "conformal-ivim>=1.0.0",
+]
 vis = [
     "matplotlib>=3.5.0",
     "seaborn>=0.11.0",
@@ -60,6 +69,9 @@ torch = [
     "torch>=2.0",
 ]
 all = [
+    "nibabel>=5.0",
+    "pydicom>=2.4",
+    "conformal-ivim>=1.0.0",
     "matplotlib>=3.5.0",
     "seaborn>=0.11.0",
     "torch>=2.0",

@@ -724,6 +724,7 @@ def _builtin_crlb_estimator(
     }
 
 
-# Trigger neural/flow baseline registrations (core remains 100% torch-free)
+# Trigger neural/flow and cross-package bridge registrations (core remains 100% torch-free & MIT-pure)
 from .baselines import maf as _maf  # noqa: E402, F401
 from .baselines import neural as _neural  # noqa: E402, F401
+from .bridges import avery_stack as _avery_stack  # noqa: E402, F401

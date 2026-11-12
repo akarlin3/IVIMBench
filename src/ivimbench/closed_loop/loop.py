@@ -201,6 +201,8 @@ class SyntheticTwinLoop:
         enable_trust_gate: bool = True,
         max_f_interval_width: float = 0.45,
         n_calibration: int = 240,
+        apply_mr_linac_ere: bool | None = None,
+        b_field_tesla: float | None = None,
         estimator_kwargs: Mapping[str, Any] | None = None,
         seed: int = DEFAULT_SEED,
     ) -> None:
@@ -227,6 +229,18 @@ class SyntheticTwinLoop:
                 )
         else:
             self.substrate = copy.deepcopy(substrate)
+
+        if apply_mr_linac_ere is None:
+            self.apply_mr_linac_ere = bool(getattr(self.substrate, "apply_mr_linac_ere", False))
+        else:
+            self.apply_mr_linac_ere = bool(apply_mr_linac_ere)
+            self.substrate.apply_mr_linac_ere = self.apply_mr_linac_ere
+
+        if b_field_tesla is None:
+            self.b_field_tesla = float(getattr(self.substrate, "b_field_tesla", 1.5))
+        else:
+            self.b_field_tesla = float(b_field_tesla)
+            self.substrate.b_field_tesla = self.b_field_tesla
 
         self.bvalues, self.protocol_name = resolve_bvalues(protocol)
         self.estimator = estimator
@@ -524,11 +538,23 @@ class SyntheticTwinLoop:
                 escalate_fg,
                 boost_factor=self.boost_factor,
                 dose_spill_sigma=self.dose_spill_sigma,
+                apply_mr_linac_ere=self.apply_mr_linac_ere,
+                b_field_tesla=self.b_field_tesla,
             )
+            ere_last = self.substrate.last_ere_perturbation
+            ere_peak_exit_pct = (
+                float(ere_last.peak_exit_enhancement_pct) if ere_last is not None else 0.0
+            )
+            ere_max_abs_delta_gy = (
+                float(np.max(np.abs(ere_last.delta_dose))) if ere_last is not None else 0.0
+            )
+
             naive_full_boost_map, _ = naive_sub.replan_dose(
                 tumor_fg,
                 boost_factor=self.boost_factor,
                 dose_spill_sigma=self.dose_spill_sigma,
+                apply_mr_linac_ere=self.apply_mr_linac_ere,
+                b_field_tesla=self.b_field_tesla,
             )
             if np.any(naive_sub.oar_mask):
                 cum_naive_boost_oar_gy += float(np.mean(naive_full_boost_map[naive_sub.oar_mask]))
@@ -572,6 +598,8 @@ class SyntheticTwinLoop:
                     "held_voxel_fraction": float(np.mean(held_fg_mask)),
                     "held_prescribed_drift_gy": held_prescribed_drift,
                     "held_delivered_drift_gy": held_delivered_drift,
+                    "ere_peak_exit_pct": ere_peak_exit_pct,
+                    "ere_max_abs_delta_gy": ere_max_abs_delta_gy,
                     "tumor_control_proxy": float(bio_stats["tumor_control_proxy"]),
                     "oar_perfusion_drop_pct": 100.0 * float(bio_stats["oar_perfusion_drop_fraction"]),
                 }
@@ -590,6 +618,8 @@ class SyntheticTwinLoop:
         summary: dict[str, Any] = {
             "interval_mode": self.interval_mode,
             "enable_trust_gate": self.enable_trust_gate,
+            "apply_mr_linac_ere": self.apply_mr_linac_ere,
+            "b_field_tesla": self.b_field_tesla if self.apply_mr_linac_ere else 0.0,
             "n_fractions": self.n_fractions,
             "tumor_control_proxy": float(df["tumor_control_proxy"].iloc[-1]),
             "cumulative_tumor_dose_gy": cum_tumor_gy,
@@ -605,6 +635,8 @@ class SyntheticTwinLoop:
             "shift_triggered_fractions": int(df["shift_is_stale"].sum()),
             "held_prescribed_drift_gy": float(df["held_prescribed_drift_gy"].sum()),
             "held_delivered_drift_gy": float(df["held_delivered_drift_gy"].sum()),
+            "mean_ere_peak_exit_pct": float(df["ere_peak_exit_pct"].mean()),
+            "max_ere_abs_delta_gy": float(df["ere_max_abs_delta_gy"].max()),
             "oar_perfusion_drop_pct": float(df["oar_perfusion_drop_pct"].iloc[-1]),
         }
         metadata: dict[str, Any] = {
@@ -615,6 +647,8 @@ class SyntheticTwinLoop:
             "hypoxia_f_threshold": self.hypoxia_f_threshold,
             "cost_ratio": self.cost_ratio,
             "boost_factor": self.boost_factor,
+            "apply_mr_linac_ere": self.apply_mr_linac_ere,
+            "b_field_tesla": self.b_field_tesla if self.apply_mr_linac_ere else 0.0,
             "substrate_class": self.substrate.__class__.__name__,
             "substrate_shape": list(self.substrate.shape),
             "seed": self.seed,
@@ -635,6 +669,8 @@ def compare_closed_loop_policies(
     cost_ratio: float = 0.75,
     boost_factor: float = 1.40,
     include_oracle: bool = True,
+    apply_mr_linac_ere: bool | None = None,
+    b_field_tesla: float | None = None,
     seed: int = DEFAULT_SEED,
 ) -> ClosedLoopComparisonReport:
     """Compare uncalibrated NLLS vs. conformalized + trust-gated intervals on identical twin trajectories."""
@@ -661,6 +697,8 @@ def compare_closed_loop_policies(
             interval_mode=mode,
             uncalibrated_sd_convention=sd_conv,
             enable_trust_gate=trust_flag,
+            apply_mr_linac_ere=apply_mr_linac_ere,
+            b_field_tesla=b_field_tesla,
             seed=seed,
         )
         runs[label] = loop.run()
@@ -694,6 +732,8 @@ def compare_closed_loop_policies(
     summary: dict[str, Any] = {
         "n_fractions": int(n_fractions),
         "snr": float(snr),
+        "apply_mr_linac_ere": bool(conf_s["apply_mr_linac_ere"]),
+        "b_field_tesla": float(conf_s["b_field_tesla"]),
         "false_escalation_reduction": float(
             uncal_s["mean_false_escalation_rate"] - conf_s["mean_false_escalation_rate"]
         ),
@@ -712,6 +752,8 @@ def compare_closed_loop_policies(
         "alpha": float(alpha),
         "hypoxia_f_threshold": float(hypoxia_f_threshold),
         "cost_ratio": float(cost_ratio),
+        "apply_mr_linac_ere": bool(conf_s["apply_mr_linac_ere"]),
+        "b_field_tesla": float(conf_s["b_field_tesla"]),
         "seed": int(seed),
     }
     return ClosedLoopComparisonReport(

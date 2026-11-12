@@ -13,6 +13,15 @@ Supports:
   Fractional-order anomalous diffusion ``(D, alpha)`` CRLB and NLLS collapse wall.
 - ``ivimbench closed-loop --fractions 5 --snr 30``: Multi-fraction synthetic-twin
   adaptive radiotherapy harness comparing uncalibrated NLLS vs. conformal intervals.
+- ``ivimbench pipeline --organ pancreas --protocol osipi --conformal cqr --fractions 5``:
+  Unified 4-stage `Trust -> Value -> Action` cross-package pipeline runner.
+- ``ivimbench fit-volume --dwi <path.nii.gz> --bval <path.bval> [--mask <mask.nii.gz>] --out <dir/>``:
+  Affine-preserving 3D/4D NIfTI & DICOM volumetric fitting and parameter-map export
+  (with ``--demo-volume`` synthetic 3D DRO round-trip mode).
+- ``ivimbench reproduce-gnomon``: Clean-room reproduce-or-refute audit against
+  pinned ``GNOMON_TARGETS``.
+- ``ivimbench forge-ere-check``: 1.5T MR-Linac 7 MV FFF photon purity, Electron
+  Return Effect (ERE) boundary perturbation, and MC simulation floor QA check.
 """
 
 from __future__ import annotations
@@ -29,9 +38,18 @@ import numpy as np
 from ._version import __version__
 from .acquisition.design import SchemeEvaluator
 from .anomalous.wall import map_recovery_collapse_wall
+from .bridges.avery_stack import run_trust_value_action_pipeline
+from .closed_loop.ere_forge import (
+    compute_ere_boundary_perturbation,
+    estimate_mc_simulation_floor,
+    generate_unity_7mv_fff_spectrum,
+    verify_photon_beam_purity,
+)
 from .closed_loop.loop import compare_closed_loop_policies
 from .decision.voi import check_domain_shift, evaluate_decision_voi
+from .gnomon.reproduce import run_gnomon_cleanroom_audit
 from .harnesses.repeatability import evaluate_repeatability, simulate_scan_rescan
+from .io.volumes import export_dro_to_nifti, fit_dwi_volume
 from .phantoms.dro import generate_dro
 from .phantoms.selfcheck import run_nlls_roundtrip_selfcheck, verify_continuity_limits
 from .phantoms.synthetic import FAMILIES, generate_cohort
@@ -445,10 +463,95 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_loop.add_argument("--estimator", type=str, default="crlb", help="Registered estimator name (default: 'crlb').")
     p_loop.add_argument("--alpha", type=float, default=0.10, help="Miscoverage rate alpha (default: 0.10).")
+    p_loop.add_argument(
+        "--ere",
+        action="store_true",
+        help="Enable 1.5T MR-Linac 7 MV FFF Electron Return Effect (ERE) boundary dose perturbations.",
+    )
     p_loop.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
     p_loop.add_argument("--out", type=str, default=None, help="Optional output directory for loop artifacts.")
     p_loop.add_argument("--json", action="store_true", help="Emit structured JSON instead of tables.")
     p_loop.set_defaults(func=_cmd_closed_loop)
+
+    # 7. ivimbench pipeline
+    p_pipe = sub.add_parser(
+        "pipeline",
+        help="Run the unified 4-stage `Trust -> Value -> Action` cross-package pipeline.",
+    )
+    p_pipe.add_argument("--organ", type=str, default="pancreas", help="Organ prior (default: 'pancreas').")
+    p_pipe.add_argument("--protocol", type=str, default="osipi", help="Acquisition protocol key (default: 'osipi').")
+    p_pipe.add_argument("--snr", type=float, default=30.0, help="Nominal b=0 DWI SNR (default: 30.0).")
+    p_pipe.add_argument(
+        "--conformal",
+        type=str,
+        default="cqr",
+        choices=("split", "cqr", "mondrian"),
+        help="Conformal calibration method ('split', 'cqr', or 'mondrian', default: 'cqr').",
+    )
+    p_pipe.add_argument("--alpha", type=float, default=0.10, help="Miscoverage rate alpha (default: 0.10).")
+    p_pipe.add_argument("--fractions", type=int, default=5, help="Closed-loop RT fractions (default: 5).")
+    p_pipe.add_argument(
+        "--ere",
+        action="store_true",
+        help="Enable 1.5T MR-Linac ERE dose perturbation in Stage 4 closed-loop action.",
+    )
+    p_pipe.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_pipe.add_argument("--out", type=str, default=None, help="Optional output directory for pipeline JSON/summary.")
+    p_pipe.add_argument("--json", action="store_true", help="Emit structured JSON instead of summary table.")
+    p_pipe.set_defaults(func=_cmd_pipeline)
+
+    # 8. ivimbench fit-volume
+    p_vol = sub.add_parser(
+        "fit-volume",
+        help="Fit a 3D/4D NIfTI or DICOM DWI volume and export affine-preserved parameter & UQ NIfTI maps.",
+    )
+    p_vol.add_argument("--dwi", type=str, default=None, help="Path to 4D DWI NIfTI (.nii/.nii.gz) or DICOM folder.")
+    p_vol.add_argument("--bval", type=str, default=None, help="Path to FSL-style .bval file.")
+    p_vol.add_argument("--mask", type=str, default=None, help="Optional path to 3D binary ROI mask NIfTI.")
+    p_vol.add_argument(
+        "--demo-volume",
+        action="store_true",
+        help="Synthesize a 3D DRO, export to NIfTI, fit it, and write the full clinical NIfTI bundle.",
+    )
+    p_vol.add_argument("--out", type=str, required=True, help="Output directory for fitted NIfTI maps.")
+    p_vol.add_argument(
+        "--estimator",
+        type=str,
+        default="conformal_ivim",
+        help="Registered estimator name (default: 'conformal_ivim').",
+    )
+    p_vol.add_argument("--organ", type=str, default="pancreas", help="Organ prior for --demo-volume (default: 'pancreas').")
+    p_vol.add_argument("--protocol", type=str, default="osipi", help="Protocol for --demo-volume (default: 'osipi').")
+    p_vol.add_argument("--snr", type=float, default=30.0, help="SNR for --demo-volume (default: 30.0).")
+    p_vol.add_argument("--alpha", type=float, default=0.10, help="Miscoverage rate alpha (default: 0.10).")
+    p_vol.add_argument("--prefix", type=str, default="", help="Optional filename prefix for saved NIfTI maps.")
+    p_vol.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_vol.add_argument("--json", action="store_true", help="Emit structured JSON summary.")
+    p_vol.set_defaults(func=_cmd_fit_volume)
+
+    # 9. ivimbench reproduce-gnomon
+    p_gnom = sub.add_parser(
+        "reproduce-gnomon",
+        help="Run the Gnomon clean-room reproduce-or-refute audit against pinned manifest targets.",
+    )
+    p_gnom.add_argument("--n-voxels", type=int, default=2000, help="Clean-room voxel count (default: 2000).")
+    p_gnom.add_argument("--alpha", type=float, default=0.10, help="Nominal miscoverage alpha (default: 0.10).")
+    p_gnom.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_gnom.add_argument("--out", type=str, default=None, help="Optional output directory for audit report.")
+    p_gnom.add_argument("--json", action="store_true", help="Emit structured JSON instead of summary table.")
+    p_gnom.set_defaults(func=_cmd_reproduce_gnomon)
+
+    # 10. ivimbench forge-ere-check
+    p_ere = sub.add_parser(
+        "forge-ere-check",
+        help="Run the Forge 7 MV FFF 1.5T MR-Linac ERE boundary dose perturbation & photon-purity QA check.",
+    )
+    p_ere.add_argument("--b-field", type=float, default=1.5, help="Transverse magnetic field in Tesla (default: 1.5).")
+    p_ere.add_argument("--n-bins", type=int, default=64, help="Energy spectrum bins (default: 64).")
+    p_ere.add_argument("--n-cases", type=int, default=10000, help="MC benchmark case count (default: 10000).")
+    p_ere.add_argument("--out", type=str, default=None, help="Optional output directory for QA JSON.")
+    p_ere.add_argument("--json", action="store_true", help="Emit structured JSON instead of QA summary.")
+    p_ere.set_defaults(func=_cmd_forge_ere_check)
 
     return parser
 
@@ -504,6 +607,7 @@ def _cmd_closed_loop(args: argparse.Namespace) -> int:
         n_fractions=int(args.fractions),
         snr=float(args.snr),
         alpha=float(args.alpha),
+        apply_mr_linac_ere=bool(getattr(args, "ere", False)),
         seed=int(args.seed),
     )
 
@@ -535,6 +639,193 @@ def _cmd_closed_loop(args: argparse.Namespace) -> int:
     )
     if args.out:
         print(f"\nSaved closed-loop artifacts to: {Path(args.out).as_posix()}")
+    return 0
+
+
+def _cmd_pipeline(args: argparse.Namespace) -> int:
+    report = run_trust_value_action_pipeline(
+        protocol=args.protocol,
+        organ=args.organ,
+        snr=float(args.snr),
+        conformal_method=args.conformal,
+        alpha=float(args.alpha),
+        fractions=int(args.fractions),
+        seed=int(args.seed),
+        apply_mr_linac_ere=bool(args.ere),
+    )
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "pipeline_report.json").write_text(report.to_json() + "\n", encoding="utf-8")
+        (out_dir / "pipeline_summary.txt").write_text(
+            report.format_summary_table() + "\n", encoding="utf-8"
+        )
+    if getattr(args, "json", False):
+        print(report.to_json())
+        return 0
+    print(report.format_summary_table())
+    if args.out:
+        print(f"\nSaved pipeline report to: {Path(args.out).as_posix()}")
+    return 0
+
+
+def _cmd_fit_volume(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.demo_volume:
+        dro = generate_dro(
+            shape=(10, 10, 8),
+            organ=args.organ,
+            protocol=args.protocol,
+            snr=float(args.snr),
+            seed=int(args.seed),
+        )
+        dro_dir = out_dir / "demo_dro_input"
+        dro_paths = export_dro_to_nifti(dro, dro_dir)
+        dwi_path = dro_paths["dwi"]
+        bval_path: Path | str | None = dro_paths["bval"]
+        mask_path: Path | str | None = dro_paths["roi_mask"]
+    else:
+        if not args.dwi:
+            raise ValueError("Provide `--dwi <path>` or pass `--demo-volume`.")
+        dwi_path = Path(args.dwi)
+        bval_path = args.bval
+        mask_path = args.mask
+
+    vol, est_out, written = fit_dwi_volume(
+        dwi_path,
+        bval_path,
+        out_dir,
+        mask_path=mask_path,
+        estimator=args.estimator,
+        alpha=float(args.alpha),
+        prefix=args.prefix,
+        estimator_kwargs={"seed": int(args.seed)},
+    )
+    railed_rate = (
+        float(np.mean(est_out.railed[:, 1])) if est_out.railed is not None else 0.0
+    )
+    payload = {
+        "spatial_shape": list(vol.spatial_shape),
+        "n_masked_voxels": int(vol.n_masked),
+        "n_bvalues": int(vol.n_bvalues),
+        "estimator": args.estimator,
+        "dstar_railed_fraction": railed_rate,
+        "files": {k: v.as_posix() for k, v in written.items()},
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print(
+        f"=== IVIMBench v{__version__} Volumetric 3D/4D Fit "
+        f"(shape={vol.spatial_shape}, n_masked={vol.n_masked}, estimator={args.estimator}) ==="
+    )
+    print(f"  - D* Boundary-Railed Fraction: {100.0 * railed_rate:.1f}%")
+    for key, fp in written.items():
+        print(f"  - {key:<22}: {fp.as_posix()}")
+    return 0
+
+
+def _cmd_reproduce_gnomon(args: argparse.Namespace) -> int:
+    verdict = run_gnomon_cleanroom_audit(
+        n_voxels=int(args.n_voxels),
+        seed=int(args.seed),
+        alpha=float(args.alpha),
+    )
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "gnomon_audit.json").write_text(verdict.to_json() + "\n", encoding="utf-8")
+        (out_dir / "gnomon_audit.txt").write_text(
+            verdict.format_summary_table() + "\n", encoding="utf-8"
+        )
+    if getattr(args, "json", False):
+        print(verdict.to_json())
+        return 0
+    print(verdict.format_summary_table())
+    return 0
+
+
+def _cmd_forge_ere_check(args: argparse.Namespace) -> int:
+    spec = generate_unity_7mv_fff_spectrum(n_bins=int(args.n_bins))
+    purity = verify_photon_beam_purity([spec.particle] * int(args.n_cases))
+
+    # Construct 3D water-air-lung-tissue slab phantom (24 x 16 x 16) irradiated along +x
+    nx, ny, nz = 24, 16, 16
+    depth_idx = np.arange(nx, dtype=np.float64)[:, None, None]
+    base_dose = np.broadcast_to(2.0 * np.exp(-0.018 * depth_idx), (nx, ny, nz)).copy()
+    density = np.ones((nx, ny, nz), dtype=np.float64)
+    density[9:14, :, :] = 0.0012   # Central air cavity (exit at i=8, re-entry at i=14)
+    density[18:21, :, :] = 0.26    # Downstream lung slab
+
+    ere_on = compute_ere_boundary_perturbation(
+        base_dose, density, b_field_tesla=float(args.b_field), beam_axis=0
+    )
+    ere_zero = compute_ere_boundary_perturbation(
+        base_dose, density, b_field_tesla=0.0, beam_axis=0
+    )
+    floor_rep = estimate_mc_simulation_floor(n_cases=int(args.n_cases))
+
+    zero_b_max_abs = float(np.max(np.abs(ere_zero.delta_dose)))
+    qa_pass = (
+        bool(purity["zero_proton_contamination"])
+        and zero_b_max_abs == 0.0
+        and (
+            float(args.b_field) == 0.0
+            or (ere_on.peak_exit_enhancement_pct > 0.0 and ere_on.within_reference_band)
+        )
+    )
+
+    payload = {
+        "qa_status": "PASS" if qa_pass else "WARN",
+        "spectrum": {
+            "n_bins": spec.n_bins,
+            "mean_energy_mev": spec.mean_energy_mev,
+            "endpoint_mv": spec.endpoint_mv,
+            "modality": spec.modality,
+        },
+        "photon_purity": purity,
+        "ere_active_field": ere_on.to_dict(),
+        "ere_zero_field_max_abs_gy": zero_b_max_abs,
+        "mc_simulation_floor": floor_rep.to_dict(),
+    }
+
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "forge_ere_qa.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(
+        f"=== IVIMBench v{__version__} Forge 1.5T MR-Linac 7 MV FFF & ERE QA Check -> "
+        f"{payload['qa_status']} ==="
+    )
+    print(
+        f"  [1] 7 MV FFF Spectrum : {spec.n_bins} bins | mean E = {spec.mean_energy_mev:.3f} MeV | "
+        f"zero_proton_contamination = {purity['zero_proton_contamination']} (n={purity['n_cases']})"
+    )
+    print(
+        f"  [2] ERE @ B={ere_on.b_field_tesla:.2f} T     : "
+        f"peak water->air exit hotspot = +{ere_on.peak_exit_enhancement_pct:.2f}% "
+        f"(Unity Geant4 ref {ere_on.reference_band_pct[0]:.1f}-{ere_on.reference_band_pct[1]:.1f}% "
+        f"+/- {ere_on.tolerance_pct:.1f}%, within_band={ere_on.within_reference_band})"
+    )
+    print(
+        f"  [3] Zero-Field Control: max |Delta D_ERE(B=0 T)| = {zero_b_max_abs:.3e} Gy"
+    )
+    print(
+        f"  [4] MC Floor ({floor_rep.n_cases:,} cases, {floor_rep.histories_per_case:.1e} hist/case): "
+        f"{floor_rep.total_core_hours:,.1f} core-h ({floor_rep.wall_days_64_cores:.1f} d @ 64c) | "
+        f"high-dose sigma = {floor_rep.estimated_high_dose_sigma_pct:.2f}% "
+        f"(gate={floor_rep.ere_gate_status}, verdict={floor_rep.feasibility_verdict})"
+    )
     return 0
 
 
