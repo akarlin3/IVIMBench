@@ -407,13 +407,10 @@ class ConformalIVIMEstimator:
                 alpha=eff_alpha,
                 method=base_method,
                 b=b_arr,
-                clip_bounds=(
-                    np.array([self.bounds[n][0] for n in PARAM_NAMES], dtype=np.float64),
-                    np.array([self.bounds[n][1] for n in PARAM_NAMES], dtype=np.float64),
-                ),
+                clip_bounds=[(self.bounds[n][0], self.bounds[n][1]) for n in PARAM_NAMES],
                 random_state=self.seed,
             )
-            model.fit(x_tr, y_tr, b=b_arr)
+            model.fit(x_tr, y_tr)
             if self.method == "mondrian":
                 cal_nlls = NLLSEstimator(
                     protocol=b_arr, bounds=self.bounds, rail_tol=self.rail_tol, max_nfev=80

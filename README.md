@@ -16,6 +16,19 @@ All parameters use canonical physical MRI units across the entire library: diffu
 
 ---
 
+## AveryCorp Scientific Suites Architecture
+
+`IVIMBench` is **Stage 3** of the **AveryCorp Open Scientific Software Ecosystem**, sharing a standardized `AuditReport` diagnostic schema (`ivimbench audit --json` / `ivimbench pipeline --json` / `run_audit()`) across two non-overlapping suites:
+
+- **Suite I: Clinical Quantitative-MRI Trust Spine (`Diagnose -> Calibrate -> Benchmark`)**
+  - [`sextantIVIM`](https://github.com/akarlin3/sextantIVIM) (Stage 1): Forward NLLS fitting, Fisher CRLB & assumption-free $D^*$ boundary-railing gate ->
+  - [`conformalIVIM`](https://github.com/akarlin3/conformalIVIM) (Stage 2): Split/CQR/Mondrian/ACI finite-sample conformal calibration, cohort shift & voxel OOD gate ->
+  - **[`IVIMBench`](https://github.com/akarlin3/IVIMBench) (Stage 3 — *This Package*)**: Canonical DRO phantoms, clean-room Gnomon/Caliper rulers & closed-loop adaptive RT benchmark.
+- **Suite II: Scientific Identifiability & Null-Audit Suite**
+  - [`weakSINDY`](https://github.com/akarlin3/weakSINDY) (Dynamical & Fractional PDEs) · [`chimeraAnneal`](https://github.com/akarlin3/chimeraAnneal) (Metastable Oscillator Survival) · [`proteusMine`](https://github.com/akarlin3/proteusMine) (Structural Bioinformatics TOST Auditing).
+
+---
+
 ## Architecture Overview (v1.4.0)
 
 1. **License-Safe `Trust -> Value -> Action` Ecosystem Bridge (`ivimbench.bridges`)** — End-to-end 4-stage quantitative spine (`run_trust_value_action_pipeline`) dynamically bridging MIT `conformal-ivim` (`ConformalIVIMEstimator` across `split`, `cqr`, and railed/interior `mondrian` modes + `DeploymentValidityMonitor`) and runtime-discovered `sextant-core` (`SextantNLLSEstimator` via `importlib.util.find_spec`, never statically linked in core MIT metadata) with deterministic pure-NumPy internal fallbacks.

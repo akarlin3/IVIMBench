@@ -3,6 +3,7 @@
 from . import (
     acquisition,
     anomalous,
+    audit,
     baselines,
     bridges,
     cli,
@@ -43,6 +44,7 @@ from .anomalous import (
     map_recovery_collapse_wall,
     simulate_anomalous_signals,
 )
+from .audit import AuditReport, run_audit, run_suite1_pipeline
 from .baselines import (
     CRLBNormalEstimator,
     HeteroscedasticQuantileMLP,
@@ -262,6 +264,10 @@ __all__ = [
     "gnomon",
     "acquisition",
     "anomalous",
+    "audit",
+    "AuditReport",
+    "run_audit",
+    "run_suite1_pipeline",
     "closed_loop",
     "harnesses",
     "decision",

@@ -38,6 +38,7 @@ import numpy as np
 from ._version import __version__
 from .acquisition.design import SchemeEvaluator
 from .anomalous.wall import map_recovery_collapse_wall
+from .audit import run_audit, run_suite1_pipeline
 from .bridges.avery_stack import run_trust_value_action_pipeline
 from .closed_loop.ere_forge import (
     compute_ere_boundary_perturbation,
@@ -553,7 +554,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_ere.add_argument("--json", action="store_true", help="Emit structured JSON instead of QA summary.")
     p_ere.set_defaults(func=_cmd_forge_ere_check)
 
+    # 11. ivimbench audit
+    p_audit = sub.add_parser(
+        "audit",
+        help="Run standardized Suite I Stage 3 AuditReport across DRO continuity, NLLS round-trip, Gnomon, and closed-loop RT.",
+    )
+    p_audit.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_audit.add_argument("--json", action="store_true", help="Emit standardized machine-readable AuditReport JSON.")
+    p_audit.set_defaults(func=_cmd_audit)
+
     return parser
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    report = run_audit(seed=int(args.seed))
+    if getattr(args, "json", False):
+        print(report.to_json())
+    else:
+        print(report.summary_line())
+        for k, v in report.metrics.items():
+            print(f"  {k:<32}: {v}")
+    return 0 if report.status != "HALT" else 1
 
 
 def _cmd_anomalous_wall(args: argparse.Namespace) -> int:
@@ -653,15 +674,25 @@ def _cmd_pipeline(args: argparse.Namespace) -> int:
         seed=int(args.seed),
         apply_mr_linac_ere=bool(args.ere),
     )
+    suite1_chain = run_suite1_pipeline(seed=int(args.seed))
+    combined_dict = {
+        **report.to_dict(),
+        "suite": suite1_chain["suite"],
+        "pipeline": suite1_chain["pipeline"],
+        "ecosystem_complete": suite1_chain["ecosystem_complete"],
+        "overall_status": suite1_chain["overall_status"],
+        "stages": suite1_chain["stages"],
+    }
+    combined_json = json.dumps(combined_dict, indent=2, sort_keys=True)
     if args.out:
         out_dir = Path(args.out)
         out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "pipeline_report.json").write_text(report.to_json() + "\n", encoding="utf-8")
+        (out_dir / "pipeline_report.json").write_text(combined_json + "\n", encoding="utf-8")
         (out_dir / "pipeline_summary.txt").write_text(
             report.format_summary_table() + "\n", encoding="utf-8"
         )
     if getattr(args, "json", False):
-        print(report.to_json())
+        print(combined_json)
         return 0
     print(report.format_summary_table())
     if args.out:
