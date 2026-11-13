@@ -19,7 +19,7 @@
       "license": "AGPL-3.0-or-later",
       "stage": "Stage 1: Forward NLLS Fitting, Fisher CRLB & Assumption-Free D* Boundary-Railing Gate",
       "version": "1.2.0",
-      "git_commit": null,
+      "git_commit": "0d06f4b7f0c6e7d8cd395b323ff2977009c445a2",
       "status": "PASS",
       "seed": 42,
       "report_sha256": "cd3e8afae574b4ff7dfc1d7e429e03f52c2cfb5e4e32771264526696a5bce063"
@@ -34,7 +34,7 @@
       "license": "MIT",
       "stage": "Stage 2: Split/CQR/Mondrian/ACI Conformal Calibration, Cohort Shift & Voxel OOD Gate",
       "version": "1.3.0",
-      "git_commit": null,
+      "git_commit": "5bcbc464e419fab1a1df4ae6ea1d6c3effcbc0e6",
       "status": "PASS",
       "seed": 42,
       "report_sha256": "1a009dd6389996a89eb3a98e560302497d33211175b230a01173976c5e6fbaa3"

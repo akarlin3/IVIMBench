@@ -20,6 +20,7 @@ from . import (
     reporting,
     runner,
     suite_runner,
+    transport,
     vis,
 )
 from ._version import __version__
@@ -108,6 +109,7 @@ from .decision import (
     compare_decision_calibration,
     compute_decision_calibration_gap,
     evaluate_decision_voi,
+    run_decision_audit,
 )
 from .evaluate import BenchmarkReport, BenchmarkSuite
 from .gnomon import (
@@ -194,6 +196,17 @@ from .suite_runner import (
     run_suite_audit,
     verify_against_baseline,
     verify_against_lock,
+)
+from .transport import (
+    FractionalTransportCRLB,
+    MisspecificationAliasingReport,
+    TransportWallReport,
+    compute_fractional_transport_crlb,
+    discrete_multiexponential_decay,
+    map_anomalous_identifiability_wall,
+    probe_misspecification_conditional_aliasing,
+    run_transport_audit,
+    stretched_exponential_decay,
 )
 from .vis import (
     plot_calibration_curves,
@@ -379,6 +392,17 @@ __all__ = [
     "run_suite_audit",
     "verify_against_baseline",
     "verify_against_lock",
+    "transport",
+    "FractionalTransportCRLB",
+    "TransportWallReport",
+    "MisspecificationAliasingReport",
+    "stretched_exponential_decay",
+    "discrete_multiexponential_decay",
+    "compute_fractional_transport_crlb",
+    "map_anomalous_identifiability_wall",
+    "probe_misspecification_conditional_aliasing",
+    "run_transport_audit",
+    "run_decision_audit",
     "vis",
     "cli",
 ]

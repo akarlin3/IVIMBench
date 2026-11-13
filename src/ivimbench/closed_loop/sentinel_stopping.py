@@ -132,6 +132,25 @@ def _build_voxel_matrices_from_loop(
     nominal = 1.0 - float(alpha)
     lam = float(cost_asymmetry)
 
+    # Domain-agnostic direct (T, N) trajectory matrices
+    if isinstance(loop_result, Mapping) and "coverage" in loop_result and "regret" in loop_result:
+        cov_raw = np.asarray(loop_result["coverage"], dtype=np.float64)
+        reg_raw = np.asarray(loop_result["regret"], dtype=np.float64)
+        if cov_raw.ndim == 1:
+            cov_raw = cov_raw[:, None]
+        if reg_raw.ndim == 1:
+            reg_raw = reg_raw[:, None]
+        if cov_raw.ndim != 2 or cov_raw.shape != reg_raw.shape or cov_raw.shape[0] < 2:
+            raise ValueError(
+                "Domain-agnostic trajectory `coverage` and `regret` must share 2D `(T >= 2, N)` shape."
+            )
+        wid_raw = (
+            np.asarray(loop_result["width"], dtype=np.float64).reshape(cov_raw.shape)
+            if "width" in loop_result
+            else np.zeros_like(cov_raw)
+        )
+        return cov_raw, reg_raw, wid_raw
+
     # Extract trajectory summary if a ClosedLoopResult / ClosedLoopComparisonReport / dict is supplied
     traj_df = None
     if loop_result is not None:
@@ -228,9 +247,10 @@ def _build_voxel_matrices_from_loop(
 
 
 def evaluate_regret_vs_coverage_stopping(
-    loop_result: Any = None,
+    trajectories_or_loop: Any = None,
     seed: int = DEFAULT_SEED,
     *,
+    loop_result: Any = None,
     alpha: float = 0.10,
     cost_asymmetry: float = 3.0,
     coverage_tol: float = 0.035,
@@ -251,6 +271,8 @@ def evaluate_regret_vs_coverage_stopping(
     if float(cost_asymmetry) <= 0.0:
         raise ValueError(f"`cost_asymmetry` must be > 0; got {cost_asymmetry!r}.")
 
+    active_source = trajectories_or_loop if trajectories_or_loop is not None else loop_result
+
     ss = np.random.SeedSequence(int(seed))
     sim_ss, boot_ss, null_ss = ss.spawn(3)
     rng_sim = np.random.Generator(np.random.PCG64(sim_ss))
@@ -258,7 +280,7 @@ def evaluate_regret_vs_coverage_stopping(
     rng_null = np.random.Generator(np.random.PCG64(null_ss))
 
     cov_mat, reg_mat, wid_mat = _build_voxel_matrices_from_loop(
-        loop_result,
+        active_source,
         rng=rng_sim,
         alpha=float(alpha),
         cost_asymmetry=float(cost_asymmetry),
