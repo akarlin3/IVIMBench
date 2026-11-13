@@ -264,13 +264,16 @@ class CanonicalFitter:
                 "fitter_backend": "sextant_core",
             }
 
+        point_arr: np.ndarray
+        s0_arr: np.ndarray
+        railed_arr: np.ndarray
         if m_clean == "segmented":
             seg = SegmentedEstimator(
                 protocol=b_arr, b_thresh=eff_thresh, bounds=self.bounds
             ).solve(sig)
-            point = np.asarray(seg.params, dtype=np.float64)
-            s0_hat = np.asarray(seg.s0, dtype=np.float64)
-            railed_mat = _compute_railed_matrix(point, self.bounds, rail_tol=self.rail_tol)
+            point_arr = np.asarray(seg.params, dtype=np.float64)
+            s0_arr = np.asarray(seg.s0, dtype=np.float64).ravel()
+            railed_arr = _compute_railed_matrix(point_arr, self.bounds, rail_tol=self.rail_tol)
         else:
             nlls = NLLSEstimator(
                 protocol=b_arr,
@@ -278,15 +281,15 @@ class CanonicalFitter:
                 rail_tol=self.rail_tol,
                 max_nfev=self.max_nfev,
             ).solve(sig)
-            point = np.asarray(nlls.params, dtype=np.float64)
-            s0_hat = np.asarray(nlls.s0, dtype=np.float64)
-            railed_mat = np.asarray(nlls.railed, dtype=bool)
+            point_arr = np.asarray(nlls.params, dtype=np.float64)
+            s0_arr = np.asarray(nlls.s0, dtype=np.float64).ravel()
+            railed_arr = np.asarray(nlls.railed, dtype=bool)
 
         return {
-            "point": point,
-            "s0": s0_hat,
-            "railed": railed_mat,
-            "dstar_railed": railed_mat[:, 1],
+            "point": point_arr,
+            "s0": s0_arr,
+            "railed": railed_arr,
+            "dstar_railed": railed_arr[:, 1],
             "fitter_backend": "ivimbench_builtin",
         }
 
@@ -357,15 +360,17 @@ class CanonicalFitter:
                 and sig.shape[-2:] == (b_arr.size, te_arr.size)
             )
         )
+        b_flat: np.ndarray
+        te_flat: np.ndarray
         if is_grid:
             bb, tt = np.meshgrid(b_arr, te_arr, indexing="ij")
             b_flat, te_flat = bb.ravel(), tt.ravel()
             spatial_shape = sig.shape[:-2]
             flat_sig = sig.reshape(-1, b_flat.size)
         else:
-            b_flat, te_flat = np.broadcast_arrays(b_arr.ravel(), te_arr.ravel())
-            b_flat = np.asarray(b_flat, dtype=np.float64)
-            te_flat = np.asarray(te_flat, dtype=np.float64)
+            b_bcast, te_bcast = np.broadcast_arrays(b_arr.ravel(), te_arr.ravel())
+            b_flat = np.asarray(b_bcast, dtype=np.float64).ravel()
+            te_flat = np.asarray(te_bcast, dtype=np.float64).ravel()
             spatial_shape = sig.shape[:-1]
             flat_sig = np.atleast_2d(sig).reshape(-1, b_flat.size)
 
