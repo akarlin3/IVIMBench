@@ -303,7 +303,9 @@ def _extract_spatial_maps(
         if "railed_mask" in fit_result and fit_result["railed_mask"] is not None:
             rm = np.asarray(fit_result["railed_mask"], dtype=np.float64)
             if rm.ndim == 1:
-                railed_raw = _unflatten_param_vector(rm, d_3d.shape, fg_mask_meta)
+                railed_raw = _unflatten_param_vector(
+                    rm, (d_3d.shape[0], d_3d.shape[1], d_3d.shape[2]), fg_mask_meta
+                )
             else:
                 railed_raw = rm[:, :, np.newaxis] if rm.ndim == 2 else rm
     else:

@@ -25,7 +25,7 @@ All parameters use canonical physical MRI units across the entire library: diffu
   - [`conformalIVIM`](https://github.com/akarlin3/conformalIVIM) (Stage 2): Split/CQR/Mondrian/ACI finite-sample conformal calibration, cohort shift & voxel OOD gate ->
   - **[`IVIMBench`](https://github.com/akarlin3/IVIMBench) (Stage 3 — *This Package*)**: Canonical DRO phantoms, clean-room Gnomon/Caliper rulers & closed-loop adaptive RT benchmark.
 - **Suite II: Scientific Identifiability & Null-Audit Suite**
-  - [`weakSINDY`](https://github.com/akarlin3/weakSINDY) (Dynamical & Fractional PDEs) · [`chimeraAnneal`](https://github.com/akarlin3/chimeraAnneal) (Metastable Oscillator Survival) · [`proteusMine`](https://github.com/akarlin3/proteusMine) (Structural Bioinformatics TOST Auditing).
+  - [`weakSINDY`](https://github.com/akarlin3/weakSINDY) (Dynamical & Fractional PDEs) · [`chimeraAnneal`](https://github.com/akarlin3/chimeraAnneal) (Metastable Oscillator Survival) · [`proteusMine`](https://github.com/akarlin3/proteusMine) (Structural Bioinformatics TOST Auditing) · [`limboAudit`](https://github.com/akarlin3/limboAudit) (Zero-Phantom Citation & Manuscript Traceability).
 
 ---
 

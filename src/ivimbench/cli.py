@@ -630,7 +630,68 @@ def build_parser() -> argparse.ArgumentParser:
     p_bids.add_argument("--json", action="store_true", help="Emit JSON manifest to stdout.")
     p_bids.set_defaults(func=_cmd_export_bids)
 
+    # 14. ivimbench suite-audit
+    p_suite = sub.add_parser(
+        "suite-audit",
+        help="Run cross-package AveryCorp Suite I & Suite II audit across all 7 registered packages.",
+    )
+    p_suite.add_argument(
+        "--suite",
+        type=str,
+        default="all",
+        choices=("all", "1", "2"),
+        help="Suite filter ('all', '1' for Suite I, or '2' for Suite II; default: 'all').",
+    )
+    p_suite.add_argument(
+        "--format",
+        dest="output_format",
+        type=str,
+        default="table",
+        choices=("table", "markdown", "latex", "html", "json"),
+        help="Output rendering format (default: 'table').",
+    )
+    p_suite.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_suite.add_argument("--strict", action="store_true", help="Treat uninstalled companion packages as HALT.")
+    p_suite.add_argument("--out", type=str, default=None, help="Optional output file path for rendered report.")
+    p_suite.add_argument("--json", action="store_true", help="Emit machine-readable SuiteAuditReport JSON.")
+    p_suite.set_defaults(func=_cmd_suite_audit)
+
     return parser
+
+
+def _cmd_suite_audit(args: argparse.Namespace) -> int:
+    from .suite_runner import (
+        format_suite_html,
+        format_suite_latex,
+        format_suite_markdown,
+        format_suite_table,
+        run_suite_audit,
+    )
+
+    report = run_suite_audit(
+        seed=int(args.seed),
+        suite_filter=str(args.suite),
+        strict=bool(getattr(args, "strict", False)),
+    )
+    fmt = "json" if getattr(args, "json", False) else str(args.output_format)
+    if fmt == "json":
+        rendered = report.to_json()
+    elif fmt == "markdown":
+        rendered = format_suite_markdown(report)
+    elif fmt == "latex":
+        rendered = format_suite_latex(report)
+    elif fmt == "html":
+        rendered = format_suite_html(report)
+    else:
+        rendered = format_suite_table(report)
+
+    if getattr(args, "out", None):
+        out_fp = Path(args.out)
+        out_fp.parent.mkdir(parents=True, exist_ok=True)
+        out_fp.write_text(rendered + "\n", encoding="utf-8")
+
+    print(rendered)
+    return 0 if report.overall_status != "HALT" else 1
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:

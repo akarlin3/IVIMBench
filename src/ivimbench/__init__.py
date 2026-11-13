@@ -19,6 +19,7 @@ from . import (
     registry,
     reporting,
     runner,
+    suite_runner,
     vis,
 )
 from ._version import __version__
@@ -152,6 +153,20 @@ from .reporting import (
     write_nifti1,
 )
 from .runner import MultiTaskBenchmarkResult, run_benchmark_suite
+from .suite_runner import (
+    AVERYCORP_SUITE_REGISTRY,
+    SuiteAuditReport,
+    SuitePackageSpec,
+    format_suite_html,
+    format_suite_latex,
+    format_suite_markdown,
+    format_suite_table,
+    get_suite_registry,
+    refresh_suite_artifacts,
+    run_suite_audit,
+    verify_against_baseline,
+    verify_against_lock,
+)
 from .vis import (
     plot_calibration_curves,
     plot_dro_slice_montage,
@@ -301,6 +316,19 @@ __all__ = [
     "registry",
     "reporting",
     "runner",
+    "suite_runner",
+    "AVERYCORP_SUITE_REGISTRY",
+    "SuitePackageSpec",
+    "SuiteAuditReport",
+    "get_suite_registry",
+    "run_suite_audit",
+    "format_suite_table",
+    "format_suite_markdown",
+    "format_suite_latex",
+    "format_suite_html",
+    "refresh_suite_artifacts",
+    "verify_against_baseline",
+    "verify_against_lock",
     "vis",
     "cli",
 ]
