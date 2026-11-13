@@ -38,7 +38,15 @@ import numpy as np
 from ._version import __version__
 from .acquisition.design import SchemeEvaluator
 from .anomalous.wall import map_recovery_collapse_wall
-from .audit import run_audit, run_suite1_pipeline
+from .audit import (
+    assert_audit_baseline,
+    build_suite1_audit_chain,
+    run_audit,
+    run_suite1_pipeline,
+    verify_audit_lock,
+    verify_suite_audit_lock,
+    write_audit_lock,
+)
 from .bridges.avery_stack import run_trust_value_action_pipeline
 from .closed_loop.ere_forge import (
     compute_ere_boundary_perturbation,
@@ -47,18 +55,34 @@ from .closed_loop.ere_forge import (
     verify_photon_beam_purity,
 )
 from .closed_loop.loop import compare_closed_loop_policies
-from .decision.voi import check_domain_shift, evaluate_decision_voi
+from .closed_loop.sentinel_stopping import evaluate_regret_vs_coverage_stopping
+from .decision.voi import (
+    check_domain_shift,
+    compute_decision_calibration_gap,
+    evaluate_decision_voi,
+)
 from .gnomon.reproduce import run_gnomon_cleanroom_audit
 from .harnesses.repeatability import evaluate_repeatability, simulate_scan_rescan
-from .io.volumes import export_dro_to_nifti, fit_dwi_volume
+from .io.clinical_bridge import export_slicer_rt_bundle
+from .io.volumes import export_dro_to_nifti, fit_dwi_volume, load_dwi_volume
 from .phantoms.dro import generate_dro
 from .phantoms.selfcheck import run_nlls_roundtrip_selfcheck, verify_continuity_limits
 from .phantoms.synthetic import FAMILIES, generate_cohort
 from .registry import DEFAULT_REGISTERED_ESTIMATORS, run_estimator
-from .reporting import export_bids_derivatives, generate_html_report
+from .reporting import export_bids_derivatives, generate_html_report, generate_volume_viewer_html
 from .runner import DEFAULT_BENCHMARK_FAMILIES, dataframe_to_markdown, run_benchmark_suite
+from .suite_runner import (
+    build_audit_lock,
+    format_suite_html,
+    format_suite_latex,
+    format_suite_markdown,
+    format_suite_table,
+    run_suite_audit,
+    verify_against_baseline,
+    verify_against_lock,
+)
 
-__all__ = ["build_parser", "main"]
+__all__ = ["build_parser", "main", "suite_audit_main", "suite_main"]
 
 
 def _split_csv(text: str) -> list[str]:
@@ -561,6 +585,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run standardized Suite I Stage 3 AuditReport across DRO continuity, NLLS round-trip, Gnomon, and closed-loop RT.",
     )
     p_audit.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_audit.add_argument("--write-lock", type=str, default=None, help="Write Stage-3 cryptographic audit-lock.json.")
+    p_audit.add_argument("--verify-lock", type=str, default=None, help="Verify Stage-3 SHA-256 digests against audit-lock.json.")
+    p_audit.add_argument("--assert-baseline", type=str, default=None, help="Assert numeric tolerance against saved AuditReport JSON.")
     p_audit.add_argument("--json", action="store_true", help="Emit standardized machine-readable AuditReport JSON.")
     p_audit.set_defaults(func=_cmd_audit)
 
@@ -630,79 +657,142 @@ def build_parser() -> argparse.ArgumentParser:
     p_bids.add_argument("--json", action="store_true", help="Emit JSON manifest to stdout.")
     p_bids.set_defaults(func=_cmd_export_bids)
 
-    # 14. ivimbench suite-audit
+    # 14. ivimbench export-slicer
+    p_slicer = sub.add_parser(
+        "export-slicer",
+        help="Export 3D Slicer NIfTI maps, RT escalation/halt uint8 masks, LUTs, load_in_slicer.py, and volume_viewer.html.",
+    )
+    p_slicer.add_argument("--dwi", type=str, default=None, help="Path to 4D DWI NIfTI (.nii/.nii.gz) or DICOM folder.")
+    p_slicer.add_argument("--bval", type=str, default=None, help="Path to FSL-style .bval file.")
+    p_slicer.add_argument("--mask", type=str, default=None, help="Optional path to 3D binary ROI mask NIfTI.")
+    p_slicer.add_argument(
+        "--demo-volume",
+        action="store_true",
+        help="Synthesize a 3D anatomical DRO and export the complete 3D Slicer + RT action bundle.",
+    )
+    p_slicer.add_argument("--subject", type=str, default="01", help="PHI-free subject identifier (default: '01').")
+    p_slicer.add_argument(
+        "--out",
+        type=str,
+        default="./slicer_rt_bundle",
+        help="Output bundle directory (default: './slicer_rt_bundle').",
+    )
+    p_slicer.add_argument("--organ", type=str, default="pancreas", help="Organ prior for --demo-volume (default: 'pancreas').")
+    p_slicer.add_argument("--protocol", type=str, default="osipi", help="Protocol key for --demo-volume (default: 'osipi').")
+    p_slicer.add_argument("--snr", type=float, default=30.0, help="SNR for --demo-volume (default: 30.0).")
+    p_slicer.add_argument(
+        "--estimator",
+        type=str,
+        default="conformal_ivim",
+        help="Registered estimator name (default: 'conformal_ivim').",
+    )
+    p_slicer.add_argument("--alpha", type=float, default=0.10, help="Miscoverage rate alpha (default: 0.10).")
+    p_slicer.add_argument(
+        "--decision-threshold",
+        type=float,
+        default=0.12,
+        help="Hypoperfusion f decision cutoff for RT escalation gate (default: 0.12).",
+    )
+    p_slicer.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_slicer.add_argument("--json", action="store_true", help="Emit JSON manifest to stdout.")
+    p_slicer.set_defaults(func=_cmd_export_slicer)
+
+    # 15. ivimbench minos-gap
+    p_minos = sub.add_parser(
+        "minos-gap",
+        help="Quantify the Minos decision-calibration gap G = tau* - tau_stat, VoC, VoTG, and Sentinel stopping rules.",
+    )
+    p_minos.add_argument("--cost-asymmetry", type=float, default=3.0, help="FN-to-FP cost asymmetry lambda (default: 3.0).")
+    p_minos.add_argument("--alpha", type=float, default=0.10, help="Nominal miscoverage rate alpha (default: 0.10).")
+    p_minos.add_argument("--protocol", type=str, default="osipi", help="Acquisition protocol key (default: 'osipi').")
+    p_minos.add_argument("--snr", type=float, default=30.0, help="Nominal b=0 SNR (default: 30.0).")
+    p_minos.add_argument(
+        "--include-sentinel",
+        action="store_true",
+        help="Also evaluate Sentinel regret-vs-coverage stopping rules alongside Minos.",
+    )
+    p_minos.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
+    p_minos.add_argument("--out", type=str, default=None, help="Optional output directory for Minos JSON report.")
+    p_minos.add_argument("--json", action="store_true", help="Emit structured JSON instead of summary text.")
+    p_minos.set_defaults(func=_cmd_minos_gap)
+
+    # 16. ivimbench suite-audit (mirrored by `averycorp-suite`)
     p_suite = sub.add_parser(
         "suite-audit",
-        help="Run cross-package AveryCorp Suite I & Suite II audit across all 7 registered packages.",
+        help=(
+            "Run the cross-package AveryCorp Suite I & Suite II audit "
+            "with cryptographic SHA-256 lockfile attestation."
+        ),
     )
     p_suite.add_argument(
         "--suite",
         type=str,
-        default="all",
         choices=("all", "1", "2"),
-        help="Suite filter ('all', '1' for Suite I, or '2' for Suite II; default: 'all').",
+        default="all",
+        help="Suite filter: 'all' (7 packages), '1' (Suite I), or '2' (Suite II) (default: 'all').",
     )
     p_suite.add_argument(
         "--format",
         dest="output_format",
         type=str,
-        default="table",
         choices=("table", "markdown", "latex", "html", "json"),
-        help="Output rendering format (default: 'table').",
+        default="table",
+        help="Output presentation format (default: 'table').",
     )
     p_suite.add_argument("--seed", type=int, default=42, help="Deterministic PCG64 seed (default: 42).")
-    p_suite.add_argument("--strict", action="store_true", help="Treat uninstalled companion packages as HALT.")
-    p_suite.add_argument("--out", type=str, default=None, help="Optional output file path for rendered report.")
-    p_suite.add_argument("--json", action="store_true", help="Emit machine-readable SuiteAuditReport JSON.")
+    p_suite.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat uninstalled companion packages as HALT instead of SKIPPED.",
+    )
+    p_suite.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Optional output file path to write the rendered suite report.",
+    )
+    p_suite.add_argument("--write-lock", type=str, default=None, help="Write cryptographic audit-lock.json.")
+    p_suite.add_argument("--verify-lock", type=str, default=None, help="Verify SHA-256 chain against audit-lock.json.")
+    p_suite.add_argument("--assert-baseline", type=str, default=None, help="Assert numeric tolerance against baseline JSON.")
+    p_suite.add_argument("--json", action="store_true", help="Emit JSON output (shorthand for --format json).")
     p_suite.set_defaults(func=_cmd_suite_audit)
 
     return parser
 
 
-def _cmd_suite_audit(args: argparse.Namespace) -> int:
-    from .suite_runner import (
-        format_suite_html,
-        format_suite_latex,
-        format_suite_markdown,
-        format_suite_table,
-        run_suite_audit,
-    )
-
-    report = run_suite_audit(
-        seed=int(args.seed),
-        suite_filter=str(args.suite),
-        strict=bool(getattr(args, "strict", False)),
-    )
-    fmt = "json" if getattr(args, "json", False) else str(args.output_format)
-    if fmt == "json":
-        rendered = report.to_json()
-    elif fmt == "markdown":
-        rendered = format_suite_markdown(report)
-    elif fmt == "latex":
-        rendered = format_suite_latex(report)
-    elif fmt == "html":
-        rendered = format_suite_html(report)
-    else:
-        rendered = format_suite_table(report)
-
-    if getattr(args, "out", None):
-        out_fp = Path(args.out)
-        out_fp.parent.mkdir(parents=True, exist_ok=True)
-        out_fp.write_text(rendered + "\n", encoding="utf-8")
-
-    print(rendered)
-    return 0 if report.overall_status != "HALT" else 1
-
-
 def _cmd_audit(args: argparse.Namespace) -> int:
     report = run_audit(seed=int(args.seed))
+    exit_code = 0 if report.status != "HALT" else 1
+
+    write_lock_path = getattr(args, "write_lock", None)
+    if write_lock_path:
+        write_audit_lock(report, write_lock_path)
+
+    verify_lock_path = getattr(args, "verify_lock", None)
+    if verify_lock_path:
+        try:
+            verify_audit_lock(report, verify_lock_path)
+        except Exception as exc:
+            print(f"[LOCKFILE VERIFICATION FAILED] {exc}", file=sys.stderr)
+            exit_code = 1
+
+    baseline_path = getattr(args, "assert_baseline", None)
+    if baseline_path:
+        try:
+            assert_audit_baseline(report, baseline_path)
+        except Exception as exc:
+            print(f"[BASELINE ASSERTION FAILED] {exc}", file=sys.stderr)
+            exit_code = 1
+
     if getattr(args, "json", False):
         print(report.to_json())
     else:
         print(report.summary_line())
         for k, v in report.metrics.items():
             print(f"  {k:<32}: {v}")
-    return 0 if report.status != "HALT" else 1
+        if report.attestation is not None:
+            print(f"  {'report_sha256':<32}: {report.attestation.report_sha256}")
+    return exit_code
 
 
 def _cmd_anomalous_wall(args: argparse.Namespace) -> int:
@@ -862,9 +952,33 @@ def _cmd_fit_volume(args: argparse.Namespace) -> int:
         prefix=args.prefix,
         estimator_kwargs={"seed": int(args.seed)},
     )
-    railed_rate = (
-        float(np.mean(est_out.railed[:, 1])) if est_out.railed is not None else 0.0
+    railed_ds = (
+        np.asarray(est_out.railed[:, 1], dtype=bool)
+        if est_out.railed is not None
+        else np.zeros(vol.n_masked, dtype=bool)
     )
+    railed_rate = float(np.mean(railed_ds)) if vol.n_masked > 0 else 0.0
+
+    def _to_vol3d(vals_1d: np.ndarray) -> np.ndarray:
+        full = np.zeros(vol.spatial_shape, dtype=np.float64)
+        full[vol.mask] = np.asarray(vals_1d, dtype=np.float64)
+        return full
+
+    rt_elig_1d = ((~railed_ds) & (est_out.upper[:, 2] <= 0.15)).astype(np.float64)
+    viewer_path = generate_volume_viewer_html(
+        {
+            "D_map": _to_vol3d(est_out.point[:, 0]),
+            "Dstar_map": _to_vol3d(est_out.point[:, 1]),
+            "f_map": _to_vol3d(est_out.point[:, 2]),
+            "D_ci_width": _to_vol3d(np.maximum(est_out.upper[:, 0] - est_out.lower[:, 0], 0.0)),
+            "Dstar_railed_mask": _to_vol3d(railed_ds.astype(np.float64)),
+            "rt_escalation_eligible_mask": _to_vol3d(rt_elig_1d),
+        },
+        out_dir / "volume_viewer.html",
+        subject_id=str(args.prefix or "demo"),
+    )
+    written = {**written, "volume_viewer": viewer_path}
+
     payload = {
         "spatial_shape": list(vol.spatial_shape),
         "n_masked_voxels": int(vol.n_masked),
@@ -1062,19 +1176,203 @@ def _cmd_export_bids(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export_slicer(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed = int(args.seed)
+
+    if args.demo_volume:
+        dro = generate_dro(
+            shape=(12, 12, 8),
+            organ=args.organ,
+            protocol=args.protocol,
+            snr=float(args.snr),
+            seed=seed,
+        )
+        dro_dir = out_dir / "demo_dro_input"
+        dro_paths = export_dro_to_nifti(dro, dro_dir)
+        dwi_path = dro_paths["dwi"]
+        bval_path: Path | str | None = dro_paths["bval"]
+        mask_path: Path | str | None = dro_paths["roi_mask"]
+    else:
+        if not args.dwi:
+            raise ValueError("Provide `--dwi <path>` or pass `--demo-volume`.")
+        dwi_path = Path(args.dwi)
+        bval_path = args.bval
+        mask_path = args.mask
+
+    vol = load_dwi_volume(dwi_path, bval_path=bval_path, mask_path=mask_path)
+    fit_res = run_estimator(
+        args.estimator,
+        vol.signals,
+        vol.bvalues,
+        alpha=float(args.alpha),
+        seed=seed,
+    )
+    audit_chain = build_suite1_audit_chain(seed=seed)
+    bundle = export_slicer_rt_bundle(
+        output_dir=out_dir,
+        subject_id=str(args.subject),
+        fit_result=fit_res,
+        audit_chain=audit_chain,
+        volume_meta=vol,
+        decision_threshold=float(args.decision_threshold),
+        seed=seed,
+    )
+
+    if getattr(args, "json", False):
+        print(bundle.to_json())
+        return 0
+
+    print(
+        f"=== IVIMBench v{__version__} 3D Slicer & RT-Dose Action Bundle "
+        f"(sub-{bundle.subject_id}, status={bundle.overall_audit_status}) ==="
+    )
+    print(f"  - Chain SHA-256         : {bundle.chain_sha256}")
+    print(f"  - Foreground ROI Voxels : {bundle.n_masked_voxels}")
+    print(f"  - RT Escalation Eligible: {bundle.n_rt_eligible_voxels}")
+    print(f"  - OOD / Railed Halt     : {bundle.n_halt_or_railed_voxels}")
+    for key, fp in bundle.paths.items():
+        print(f"  - {key:<26}: {fp.as_posix()}")
+    return 0
+
+
+def _cmd_minos_gap(args: argparse.Namespace) -> int:
+    seed = int(args.seed)
+    minos_rep = compute_decision_calibration_gap(
+        cost_asymmetry=float(args.cost_asymmetry),
+        alpha=float(args.alpha),
+        bvalues=args.protocol,
+        snr=float(args.snr),
+        seed=seed,
+    )
+    payload: dict[str, object] = minos_rep.to_dict()
+    if getattr(args, "include_sentinel", False):
+        sentinel_rep = evaluate_regret_vs_coverage_stopping(seed=seed)
+        payload["sentinel_stopping"] = sentinel_rep.to_dict()
+
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "minos_gap_report.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"=== IVIMBench v{__version__} Minos Decision-Calibration Gap -> {minos_rep.status} ===")
+    print(f"  {minos_rep.verdict}")
+    print(
+        f"  - tau_stat = {minos_rep.tau_stat:.3f} (cov={minos_rep.coverage_at_tau_stat:.3f}) | "
+        f"tau* = {minos_rep.tau_star:.3f} (cov={minos_rep.coverage_at_tau_star:.3f}) | "
+        f"Gap G = {minos_rep.gap:+.3f}"
+    )
+    print(
+        f"  - Value of Calibration (VoC) = {minos_rep.value_of_calibration:.4f} | "
+        f"Value of Trust-Gate (VoTG) = {minos_rep.value_of_trust_gate:.4f}"
+    )
+    print(
+        f"  - Shift Observability Separation: Observable AUC = {minos_rep.observable_shift_auc:.3f} "
+        f"vs. Hidden-Truth AUC = {minos_rep.hidden_truth_shift_auc:.3f}"
+    )
+    if "sentinel_stopping" in payload:
+        st = payload["sentinel_stopping"]
+        if isinstance(st, dict):
+            print(f"  - Sentinel Stopping: {st.get('verdict')}")
+    return 0
+
+
+def _cmd_suite_audit(args: argparse.Namespace) -> int:
+    seed = int(args.seed)
+    suite_filter = str(getattr(args, "suite", "all"))
+    strict = bool(getattr(args, "strict", False))
+    report = run_suite_audit(seed=seed, suite_filter=suite_filter, strict=strict)
+    exit_code = 0 if report.overall_status != "HALT" else 1
+
+    write_lock_path = getattr(args, "write_lock", None)
+    if write_lock_path:
+        w_path = Path(write_lock_path)
+        existing_lock = (
+            json.loads(w_path.read_text(encoding="utf-8")) if w_path.is_file() else None
+        )
+        lock_payload = build_audit_lock(report, seed=seed, existing_lock=existing_lock)
+        w_path.parent.mkdir(parents=True, exist_ok=True)
+        w_path.write_text(json.dumps(lock_payload, indent=2) + "\n", encoding="utf-8")
+
+    verify_lock_path = getattr(args, "verify_lock", None)
+    if verify_lock_path:
+        try:
+            lock_data = json.loads(Path(verify_lock_path).read_text(encoding="utf-8"))
+            if "stages" in lock_data and "packages" not in lock_data:
+                verify_suite_audit_lock(build_suite1_audit_chain(seed=seed), verify_lock_path)
+            else:
+                res_lock = verify_against_lock(report, lock_data)
+                if not res_lock["passed"]:
+                    raise AssertionError(
+                        f"Lockfile SHA-256 mismatch: {res_lock.get('mismatches')}"
+                    )
+        except Exception as exc:
+            print(f"[SUITE LOCKFILE VERIFICATION FAILED] {exc}", file=sys.stderr)
+            exit_code = 1
+
+    baseline_path = getattr(args, "assert_baseline", None)
+    if baseline_path:
+        try:
+            base_data = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+            if "packages" in base_data:
+                res_base = verify_against_baseline(report, base_data)
+                if not res_base["passed"]:
+                    raise AssertionError(f"Baseline drift detected: {res_base.get('drifts')}")
+            else:
+                stage3_rep = run_audit(seed=seed)
+                assert_audit_baseline(stage3_rep, baseline_path)
+        except Exception as exc:
+            print(f"[SUITE BASELINE ASSERTION FAILED] {exc}", file=sys.stderr)
+            exit_code = 1
+
+    fmt = "json" if bool(getattr(args, "json", False)) else str(getattr(args, "output_format", "table"))
+    if fmt == "json":
+        rendered = report.to_json()
+    elif fmt == "markdown":
+        rendered = format_suite_markdown(report)
+    elif fmt == "latex":
+        rendered = format_suite_latex(report)
+    elif fmt == "html":
+        rendered = format_suite_html(report)
+    else:
+        rendered = format_suite_table(report)
+
+    out_path = getattr(args, "out", None)
+    if out_path:
+        dest = Path(out_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rendered + "\n", encoding="utf-8")
+
+    print(rendered)
+    return exit_code
+
+
+def suite_main(argv: Sequence[str] | None = None) -> int:
+    """Dedicated entry point for ``averycorp-suite`` cross-suite audit & lockfile verification."""
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
+    if raw_args and raw_args[0] == "--version":
+        print(f"averycorp-suite (ivimbench {__version__})")
+        return 0
+    if raw_args and raw_args[0] == "suite-audit":
+        return main(raw_args)
+    return main(["suite-audit", *raw_args])
+
+
+suite_audit_main = suite_main
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point returning an integer exit code."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     return int(args.func(args))
-
-
-def suite_main(argv: Sequence[str] | None = None) -> int:
-    """Standalone ``averycorp-suite`` entrypoint dispatching to ``suite-audit``."""
-    raw = list(argv) if argv is not None else sys.argv[1:]
-    if raw and raw[0] == "suite-audit":
-        return main(raw)
-    return main(["suite-audit", *raw])
 
 
 if __name__ == "__main__":  # pragma: no cover

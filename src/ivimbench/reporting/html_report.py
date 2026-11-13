@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from .._version import __version__
 __all__ = [
     "compute_gnomon_audit_badges",
     "generate_html_report",
+    "generate_volume_viewer_html",
 ]
 
 
@@ -440,6 +442,8 @@ def generate_html_report(
     out_path: str | Path = "ivimbench_report.html",
     *,
     title: str | None = None,
+    volume_bundle: Mapping[str, np.ndarray] | None = None,
+    audit_summary: Mapping[str, Any] | None = None,
 ) -> Path:
     """Emit a standalone, zero-dependency interactive HTML report with sortable tables, inline SVGs, and Gnomon badges."""
     summary_df, records_df, metadata = _extract_report_tables(benchmark_or_pipeline_result)
@@ -453,6 +457,27 @@ def generate_html_report(
     records_table_html = _df_to_sortable_html_table(records_df.head(250), "detailed-records")
 
     page_title = title or f"IVIMBench v{__version__} Calibration & Acquisition Leaderboard"
+
+    target = Path(out_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    viewer_banner = ""
+    if volume_bundle is not None:
+        viewer_path = target.parent / "volume_viewer.html"
+        generate_volume_viewer_html(
+            volume_bundle,
+            viewer_path,
+            title=f"{page_title} · Volumetric Viewer",
+            audit_summary=audit_summary,
+        )
+        viewer_banner = (
+            '<div class="panel" style="margin-bottom: 1.5rem; background: #121b2d; color: #f8fafc; '
+            'border: 1px solid #d4af37; display: flex; justify-content: space-between; align-items: center;">'
+            '<div><strong style="color: #d4af37;">Interactive 3D Multi-Slice Volumetric Viewer</strong>'
+            '<div style="font-size: 0.85rem; color: #cbd5e1;">Inspect axial D, D*, f, Conformal CI Width, '
+            'D* Boundary-Railed Mask, and RT Escalation Gate Mask directly in browser.</div></div>'
+            '<a href="volume_viewer.html" style="color: #121b2d; background: #d4af37; padding: 0.45rem 0.9rem; '
+            'border-radius: 6px; font-weight: 600; text-decoration: none;">Open volume_viewer.html</a></div>'
+        )
 
     badge_cards = []
     for b in badges:
@@ -486,7 +511,7 @@ def generate_html_report(
     .gnomon-top {{ display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }}
     .gnomon-title {{ font-weight: 600; font-size: 0.88rem; }}
     .gnomon-detail {{ color: var(--muted); font-size: 0.83rem; font-family: ui-monospace, monospace; }}
-    .gnomon-pill {{ font-size: 0.72rem; font-weight: 700; padding: 0.15rem 0.55rem; border-radius: 999px; letter-spacing: 0.03em; }}
+    .gnomon-pill {{ font-size: 0.73rem; font-weight: 700; padding: 0.16rem 0.5rem; border-radius: 999px; letter-spacing: 0.03em; }}
     .pill-pass {{ background: var(--pass-bg); color: var(--pass-fg); }}
     .pill-warn {{ background: var(--warn-bg); color: var(--warn-fg); }}
     .pill-fail {{ background: var(--fail-bg); color: var(--fail-fg); }}
@@ -513,6 +538,8 @@ def generate_html_report(
         <div class="meta-sub">Gnomon Calibration &amp; Acquisition Audit · Nominal Coverage = {nominal:.2f} · IVIMBench v{__version__}</div>
       </div>
     </header>
+
+    {viewer_banner}
 
     <section class="gnomon-grid" aria-label="Gnomon Audit Badges">
       {''.join(badge_cards)}
@@ -577,7 +604,433 @@ def generate_html_report(
 </body>
 </html>
 """
-    target = Path(out_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(doc, encoding="utf-8")
     return target
+
+
+def _normalize_3d_volume(arr: Any, fallback_shape: tuple[int, int, int]) -> np.ndarray:
+    if arr is None:
+        return np.zeros(fallback_shape, dtype=np.float64)
+    v = np.asarray(arr, dtype=np.float64)
+    if v.ndim == 2:
+        v = v[:, :, None]
+    if v.ndim != 3:
+        raise ValueError(f"Expected 2D or 3D volume array; got shape {v.shape}.")
+    return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def generate_volume_viewer_html(
+    volumes: Mapping[str, Any],
+    out_path: str | Path = "volume_viewer.html",
+    *,
+    title: str | None = None,
+    subject_id: str = "demo",
+    audit_summary: Mapping[str, Any] | None = None,
+) -> Path:
+    """Emit a standalone Minimalist Luxury (`#121b2d` / `#d4af37`) interactive multi-slice HTML5 Canvas/SVG viewer."""
+    d_raw = volumes.get("D_map", volumes.get("D"))
+    if d_raw is None:
+        first_arr = next(iter(volumes.values()))
+        ref_v = np.asarray(first_arr, dtype=np.float64)
+        if ref_v.ndim == 2:
+            ref_v = ref_v[:, :, None]
+        shape3 = (int(ref_v.shape[0]), int(ref_v.shape[1]), int(ref_v.shape[2]))
+    else:
+        tmp = np.asarray(d_raw, dtype=np.float64)
+        if tmp.ndim == 2:
+            tmp = tmp[:, :, None]
+        shape3 = (int(tmp.shape[0]), int(tmp.shape[1]), int(tmp.shape[2]))
+
+    d_vol = _normalize_3d_volume(volumes.get("D_map", volumes.get("D")), shape3)
+    ds_vol = _normalize_3d_volume(volumes.get("Dstar_map", volumes.get("Dstar")), shape3)
+    f_vol = _normalize_3d_volume(volumes.get("f_map", volumes.get("f")), shape3)
+    ci_vol = _normalize_3d_volume(
+        volumes.get("D_ci_width", volumes.get("f_ci_width", volumes.get("ci_width"))),
+        shape3,
+    )
+    rail_vol = _normalize_3d_volume(
+        volumes.get("Dstar_railed_mask", volumes.get("railed_mask")),
+        shape3,
+    )
+    rt_vol = _normalize_3d_volume(
+        volumes.get("rt_escalation_eligible_mask", volumes.get("rt_gate_mask")),
+        shape3,
+    )
+
+    nx, ny, nz = shape3
+
+    def _serialize_vol(v: np.ndarray, decimals: int = 6) -> list[Any]:
+        # Transpose to [z][y][x] for direct axial canvas scanline rendering
+        zyx = np.transpose(np.round(v, decimals), (2, 1, 0))
+        return zyx.tolist()
+
+    payload = {
+        "shape": [nx, ny, nz],
+        "subject_id": str(subject_id),
+        "layers": {
+            "D_map": {
+                "label": "D Map",
+                "unit": "mm²/s",
+                "vmin": float(np.min(d_vol)),
+                "vmax": max(float(np.max(d_vol)), 1e-6),
+                "data": _serialize_vol(d_vol, 6),
+            },
+            "Dstar_map": {
+                "label": "D* Map",
+                "unit": "mm²/s",
+                "vmin": float(np.min(ds_vol)),
+                "vmax": max(float(np.max(ds_vol)), 1e-5),
+                "data": _serialize_vol(ds_vol, 5),
+            },
+            "f_map": {
+                "label": "f Map",
+                "unit": "fraction",
+                "vmin": float(np.min(f_vol)),
+                "vmax": max(float(np.max(f_vol)), 1e-4),
+                "data": _serialize_vol(f_vol, 4),
+            },
+            "ci_width": {
+                "label": "Conformal CI Width",
+                "unit": "90% CI",
+                "vmin": 0.0,
+                "vmax": max(float(np.max(ci_vol)), 1e-6),
+                "data": _serialize_vol(ci_vol, 6),
+            },
+        },
+        "overlays": {
+            "railed_mask": {
+                "label": "D* Boundary-Railed Mask",
+                "data": _serialize_vol((rail_vol > 0).astype(int), 0),
+            },
+            "rt_gate_mask": {
+                "label": "RT Escalation Gate Mask",
+                "data": _serialize_vol((rt_vol > 0).astype(int), 0),
+            },
+        },
+    }
+
+    audit_info = dict(audit_summary or {})
+    audit_status = str(audit_info.get("overall_status", audit_info.get("status", "PASS")))
+    chain_sha = str(audit_info.get("chain_sha256", "standalone-session"))
+    viewer_title = title or f"IVIMBench v{__version__} · Volumetric Trust & RT Gate Viewer"
+    init_z = nz // 2
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{html.escape(viewer_title)}</title>
+  <style>
+    :root {{
+      --navy: #121b2d;
+      --surface: #18243c;
+      --panel: #1f2e4d;
+      --gold: #d4af37;
+      --gold-soft: rgba(212, 175, 55, 0.22);
+      --text: #f8fafc;
+      --muted: #9fb0cc;
+      --crimson: #ef4444;
+      --emerald: #10b981;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      padding: 2rem;
+      background: var(--navy);
+      color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }}
+    .shell {{ max-width: 1160px; margin: 0 auto; }}
+    header {{
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding-bottom: 1.25rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--gold-soft);
+    }}
+    h1 {{ margin: 0; font-size: 1.45rem; letter-spacing: 0.02em; color: var(--gold); }}
+    .sub {{ color: var(--muted); font-size: 0.86rem; font-family: ui-monospace, monospace; }}
+    .badge {{
+      padding: 0.35rem 0.8rem;
+      border-radius: 999px;
+      border: 1px solid var(--gold);
+      background: rgba(212, 175, 55, 0.12);
+      color: var(--gold);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }}
+    .workspace {{
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) 360px;
+      gap: 1.5rem;
+      align-items: start;
+    }}
+    @media (max-width: 860px) {{ .workspace {{ grid-template-columns: 1fr; }} }}
+    .card {{
+      background: var(--surface);
+      border: 1px solid var(--gold-soft);
+      border-radius: 12px;
+      padding: 1.25rem;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+    }}
+    .canvas-stage {{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }}
+    canvas {{
+      width: 100%;
+      max-width: 460px;
+      aspect-ratio: {nx} / {ny};
+      image-rendering: pixelated;
+      border: 1px solid var(--gold);
+      border-radius: 8px;
+      background: #0a101d;
+      cursor: crosshair;
+    }}
+    .scrubber {{ width: 100%; max-width: 460px; }}
+    .scrubber label {{
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.86rem;
+      color: var(--gold);
+      margin-bottom: 0.35rem;
+      font-weight: 600;
+    }}
+    input[type="range"] {{ width: 100%; accent-color: var(--gold); cursor: pointer; }}
+    .control-title {{
+      margin: 0 0 0.65rem 0;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--gold);
+    }}
+    .layer-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1.2rem; }}
+    .layer-btn {{
+      padding: 0.55rem 0.65rem;
+      border-radius: 7px;
+      border: 1px solid var(--gold-soft);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 0.83rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }}
+    .layer-btn.active {{
+      background: var(--gold);
+      color: var(--navy);
+      border-color: var(--gold);
+    }}
+    .toggle-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.55rem 0.7rem;
+      border-radius: 7px;
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      margin-bottom: 0.55rem;
+      font-size: 0.85rem;
+    }}
+    .readout {{
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      background: #0f1728;
+      border: 1px solid var(--gold-soft);
+      font-family: ui-monospace, monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }}
+    footer {{
+      margin-top: 1.75rem;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>{html.escape(viewer_title)}</h1>
+        <div class="sub">Subject: sub-{html.escape(str(subject_id))} · Matrix: {nx}×{ny}×{nz} · Chain SHA-256: {html.escape(chain_sha[:16])}…</div>
+      </div>
+      <div class="badge">SUITE I AUDIT: {html.escape(audit_status)}</div>
+    </header>
+
+    <div class="workspace">
+      <section class="card canvas-stage" aria-label="Axial Slice Canvas">
+        <canvas id="ivim-slice-canvas" width="{nx}" height="{ny}"></canvas>
+        <div class="scrubber">
+          <label for="z-slice-slider">
+            <span>Axial Z-Slice Scrubber</span>
+            <span id="z-slice-label">z = {init_z} / {max(nz - 1, 0)}</span>
+          </label>
+          <input id="z-slice-slider" type="range" min="0" max="{max(nz - 1, 0)}" step="1" value="{init_z}"/>
+        </div>
+        <svg width="100%" height="36" viewBox="0 0 420 36" aria-label="Colorbar Legend" style="max-width: 460px;">
+          <defs>
+            <linearGradient id="luxury-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#0d1626"/>
+              <stop offset="35%" stop-color="#1e4d7b"/>
+              <stop offset="70%" stop-color="#b8860b"/>
+              <stop offset="100%" stop-color="#f7e396"/>
+            </linearGradient>
+          </defs>
+          <rect x="10" y="4" width="400" height="12" rx="4" fill="url(#luxury-grad)" stroke="#d4af37" stroke-width="0.8"/>
+          <text id="cbar-min" x="10" y="30" fill="#9fb0cc" font-size="11" font-family="monospace">0.0</text>
+          <text id="cbar-unit" x="210" y="30" fill="#d4af37" font-size="11" text-anchor="middle" font-family="monospace">D Map (mm²/s)</text>
+          <text id="cbar-max" x="410" y="30" fill="#9fb0cc" font-size="11" text-anchor="end" font-family="monospace">0.003</text>
+        </svg>
+      </section>
+
+      <aside class="card" aria-label="Layer and Mask Controls">
+        <h2 class="control-title">Base Quantitative Map</h2>
+        <div class="layer-grid">
+          <button type="button" class="layer-btn active" data-layer="D_map">D Map</button>
+          <button type="button" class="layer-btn" data-layer="Dstar_map">D* Map</button>
+          <button type="button" class="layer-btn" data-layer="f_map">f Map</button>
+          <button type="button" class="layer-btn" data-layer="ci_width">Conformal CI Width</button>
+        </div>
+
+        <h2 class="control-title">Clinical QA &amp; RT Overlays (40% Alpha)</h2>
+        <label class="toggle-row">
+          <span><span style="color:#ef4444;">■</span> D* Boundary-Railed Mask</span>
+          <input type="checkbox" id="toggle-railed" checked/>
+        </label>
+        <label class="toggle-row">
+          <span><span style="color:#10b981;">■</span> RT Escalation Gate Mask</span>
+          <input type="checkbox" id="toggle-rt-gate" checked/>
+        </label>
+
+        <div class="readout" id="voxel-inspector">
+          Hover over axial slice to inspect per-voxel D, D*, f, Conformal CI Width, and RT gate status.
+        </div>
+      </aside>
+    </div>
+
+    <footer>IVIMBench v{__version__} · Suite I Clinical Quantitative-MRI Trust Spine · 100% Zero-Dependency Browser Viewer (PHI-Free)</footer>
+  </div>
+
+  <script>
+    const VOLUME_BUNDLE = {json.dumps(payload, separators=(",", ":"))};
+    let activeLayer = "D_map";
+    let currentZ = {init_z};
+
+    const canvas = document.getElementById("ivim-slice-canvas");
+    const ctx = canvas.getContext("2d");
+    const zSlider = document.getElementById("z-slice-slider");
+    const zLabel = document.getElementById("z-slice-label");
+    const toggleRailed = document.getElementById("toggle-railed");
+    const toggleRt = document.getElementById("toggle-rt-gate");
+    const inspector = document.getElementById("voxel-inspector");
+
+    function sampleColormap(t) {{
+      const u = Math.max(0.0, Math.min(1.0, t));
+      if (u < 0.5) {{
+        const s = u / 0.5;
+        return [
+          Math.round(13 + s * (38 - 13)),
+          Math.round(22 + s * (92 - 22)),
+          Math.round(38 + s * (145 - 38))
+        ];
+      }}
+      const s = (u - 0.5) / 0.5;
+      return [
+        Math.round(38 + s * (238 - 38)),
+        Math.round(92 + s * (205 - 92)),
+        Math.round(145 + s * (112 - 145))
+      ];
+    }}
+
+    function renderSlice() {{
+      const [nx, ny, nz] = VOLUME_BUNDLE.shape;
+      const layer = VOLUME_BUNDLE.layers[activeLayer];
+      const slice = layer.data[currentZ];
+      const railSlice = VOLUME_BUNDLE.overlays.railed_mask.data[currentZ];
+      const rtSlice = VOLUME_BUNDLE.overlays.rt_gate_mask.data[currentZ];
+      const img = ctx.createImageData(nx, ny);
+      const span = Math.max(layer.vmax - layer.vmin, 1e-12);
+
+      for (let y = 0; y < ny; y++) {{
+        for (let x = 0; x < nx; x++) {{
+          const val = slice[y][x];
+          let [r, g, b] = val === 0 ? [10, 16, 29] : sampleColormap((val - layer.vmin) / span);
+          if (toggleRailed.checked && railSlice[y][x] > 0) {{
+            r = Math.round(0.6 * r + 0.4 * 239);
+            g = Math.round(0.6 * g + 0.4 * 68);
+            b = Math.round(0.6 * b + 0.4 * 68);
+          }}
+          if (toggleRt.checked && rtSlice[y][x] > 0) {{
+            r = Math.round(0.6 * r + 0.4 * 16);
+            g = Math.round(0.6 * g + 0.4 * 185);
+            b = Math.round(0.6 * b + 0.4 * 129);
+          }}
+          const idx = 4 * (y * nx + x);
+          img.data[idx] = r;
+          img.data[idx + 1] = g;
+          img.data[idx + 2] = b;
+          img.data[idx + 3] = 255;
+        }}
+      }}
+      ctx.putImageData(img, 0, 0);
+      zLabel.textContent = `z = ${{currentZ}} / ${{Math.max(nz - 1, 0)}}`;
+      document.getElementById("cbar-min").textContent = layer.vmin.toExponential(2);
+      document.getElementById("cbar-max").textContent = layer.vmax.toExponential(2);
+      document.getElementById("cbar-unit").textContent = `${{layer.label}} (${{layer.unit}})`;
+    }}
+
+    document.querySelectorAll(".layer-btn").forEach((btn) => {{
+      btn.addEventListener("click", () => {{
+        document.querySelectorAll(".layer-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeLayer = btn.getAttribute("data-layer");
+        renderSlice();
+      }});
+    }});
+
+    zSlider.addEventListener("input", (ev) => {{
+      currentZ = parseInt(ev.target.value, 10) || 0;
+      renderSlice();
+    }});
+    toggleRailed.addEventListener("change", renderSlice);
+    toggleRt.addEventListener("change", renderSlice);
+
+    canvas.addEventListener("mousemove", (ev) => {{
+      const rect = canvas.getBoundingClientRect();
+      const [nx, ny] = VOLUME_BUNDLE.shape;
+      const x = Math.min(nx - 1, Math.max(0, Math.floor(((ev.clientX - rect.left) / rect.width) * nx)));
+      const y = Math.min(ny - 1, Math.max(0, Math.floor(((ev.clientY - rect.top) / rect.height) * ny)));
+      const dV = VOLUME_BUNDLE.layers.D_map.data[currentZ][y][x];
+      const dsV = VOLUME_BUNDLE.layers.Dstar_map.data[currentZ][y][x];
+      const fV = VOLUME_BUNDLE.layers.f_map.data[currentZ][y][x];
+      const ciV = VOLUME_BUNDLE.layers.ci_width.data[currentZ][y][x];
+      const isRail = VOLUME_BUNDLE.overlays.railed_mask.data[currentZ][y][x] > 0;
+      const isRt = VOLUME_BUNDLE.overlays.rt_gate_mask.data[currentZ][y][x] > 0;
+      inspector.innerHTML =
+        `Voxel (${{x}}, ${{y}}, ${{currentZ}})<br/>` +
+        `D=${{dV.toExponential(3)}} | D*=${{dsV.toExponential(3)}} | f=${{fV.toFixed(3)}}<br/>` +
+        `CI Width=${{ciV.toExponential(3)}} | Railed=${{isRail}} | RT Eligible=${{isRt}}`;
+    }});
+
+    renderSlice();
+  </script>
+</body>
+</html>
+"""
+    target = Path(out_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(html_doc, encoding="utf-8")
+    return target
+

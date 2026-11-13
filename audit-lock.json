@@ -1,12 +1,13 @@
 {
   "schema_version": "1.0.0",
   "generator": "ivimbench.suite_runner",
-  "ivimbench_version": "1.5.0",
+  "ivimbench_version": "1.6.0",
   "seed": 42,
   "catalog_size": 7,
   "suite_i_count": 3,
   "suite_ii_count": 4,
-  "catalog_sha256": "c2d65557ec42ecbd00580bb6b30160adfe29ae1e6e6bff1ce511719cc11d9bdf",
+  "catalog_sha256": "8fa55e91a243fff7723750fc4fdb8b8e9583f1dd7da6bd76ac66e5f75742dd9c",
+  "chain_sha256": "bad2bf13be74feb49ce5c65073e0a7e6d480e66824bbd6486cf99ae263d4cdce",
   "packages": {
     "sextant-ivim": {
       "name": "sextant-ivim",
@@ -17,11 +18,11 @@
       "repo": "akarlin3/sextantIVIM",
       "license": "AGPL-3.0-or-later",
       "stage": "Stage 1: Forward NLLS Fitting, Fisher CRLB & Assumption-Free D* Boundary-Railing Gate",
-      "version": "1.1.0",
-      "git_commit": "fd081d1a2d0c21bc348cb6fd5f7926424aab258c",
+      "version": "1.2.0",
+      "git_commit": null,
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "959fc79442d3c0928449766eaebba2ca611dd3d11719a44ba873fd40be23970d"
+      "report_sha256": "cd3e8afae574b4ff7dfc1d7e429e03f52c2cfb5e4e32771264526696a5bce063"
     },
     "conformal-ivim": {
       "name": "conformal-ivim",
@@ -32,11 +33,11 @@
       "repo": "akarlin3/conformalIVIM",
       "license": "MIT",
       "stage": "Stage 2: Split/CQR/Mondrian/ACI Conformal Calibration, Cohort Shift & Voxel OOD Gate",
-      "version": "1.2.0",
-      "git_commit": "a5cc3f7d493b51faf31fd7615e6648b434f96ed3",
+      "version": "1.3.0",
+      "git_commit": null,
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "c1a1aeafc558bea370ac96f9d664fb3ec349e701e3267f5213d01cd331c7ccb5"
+      "report_sha256": "1a009dd6389996a89eb3a98e560302497d33211175b230a01173976c5e6fbaa3"
     },
     "ivimbench": {
       "name": "ivimbench",
@@ -47,11 +48,12 @@
       "repo": "akarlin3/IVIMBench",
       "license": "MIT",
       "stage": "Stage 3: Canonical DRO Phantoms, Clean-Room Gnomon/Caliper Rulers & Closed-Loop RT Benchmark",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "git_commit": null,
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "315950308cf24c683925aa90af02065ac24b426d47557ca492e0d1c030fd6325"
+      "report_sha256": "f9b524bec60fcdc97bb468f2a0b8ba92552e3ab2a17cc8a69ae7b3f246e4d32c",
+      "standalone_report_sha256": "7d449033e298e6533c1548ec0187d094afcc00a9efb1ecc426ca1d6d2aac5ee6"
     },
     "weak-sindy": {
       "name": "weak-sindy",

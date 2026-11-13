@@ -19,6 +19,7 @@ REQUIRED_AUDIT_KEYS = {
     "metrics",
     "thresholds",
     "seed",
+    "attestation",
 }
 
 

@@ -1,5 +1,6 @@
 """Volumetric 3D/4D NIfTI-1 and DICOM clinical image I/O utilities."""
 
+from .clinical_bridge import SlicerRTBundleResult, export_slicer_rt_bundle
 from .volumes import (
     IO_EXTRA_INSTALL_MSG,
     DWIVolumeData,
@@ -20,6 +21,7 @@ __all__ = [
     "has_nibabel",
     "has_pydicom",
     "DWIVolumeData",
+    "SlicerRTBundleResult",
     "read_bvals",
     "write_bvals",
     "read_nifti",
@@ -27,5 +29,6 @@ __all__ = [
     "load_dwi_volume",
     "save_parameter_maps",
     "export_dro_to_nifti",
+    "export_slicer_rt_bundle",
     "fit_dwi_volume",
 ]

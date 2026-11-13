@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from .bids import BIDSExportResult, export_bids_derivatives, read_nifti1, write_nifti1
-from .html_report import compute_gnomon_audit_badges, generate_html_report
+from .html_report import (
+    compute_gnomon_audit_badges,
+    generate_html_report,
+    generate_volume_viewer_html,
+)
 
 __all__ = [
     "BIDSExportResult",
@@ -12,4 +16,5 @@ __all__ = [
     "export_bids_derivatives",
     "compute_gnomon_audit_badges",
     "generate_html_report",
+    "generate_volume_viewer_html",
 ]

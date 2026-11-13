@@ -18,6 +18,10 @@ from .loop import (
     SyntheticTwinLoop,
     compare_closed_loop_policies,
 )
+from .sentinel_stopping import (
+    SentinelStoppingReport,
+    evaluate_regret_vs_coverage_stopping,
+)
 from .substrates import (
     BaseTwinSubstrate,
     ParameterizedDoseGeometryTwin,
@@ -35,6 +39,8 @@ __all__ = [
     "ClosedLoopComparisonReport",
     "SyntheticTwinLoop",
     "compare_closed_loop_policies",
+    "SentinelStoppingReport",
+    "evaluate_regret_vs_coverage_stopping",
     "UNITY_ERE_REFERENCE_BAND_PCT",
     "UNITY_ERE_TOLERANCE_PCT",
     "UnityPhotonSpectrum",

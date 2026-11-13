@@ -14,6 +14,8 @@ and Datum (``datum.ci``):
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -30,6 +32,7 @@ __all__ = [
     "DEFAULT_NOMINAL_LEVELS",
     "TERCILE_LABELS",
     "StratumCoverage",
+    "has_conformal_ivim",
     "normalize_sd_convention",
     "apply_sd_convention",
     "apply_interval_sd_convention",
@@ -55,6 +58,8 @@ __all__ = [
     "SplitConformalResidual",
     "SplitConformalQuantile",
     "MondrianConformalQuantile",
+    "SequentialConformalCalibrator",
+    "calibrate_conformal_intervals",
 ]
 
 SDConvention = Literal["honest_crlb", "floored_railed"]
@@ -733,8 +738,19 @@ def bootstrap_coverage_ci(
 
 
 # --------------------------------------------------------------------------- #
-# Conformal post-hoc calibration wrappers (ported from Caliper)
+# Conformal post-hoc calibration wrappers (delegating to conformal_ivim)
 # --------------------------------------------------------------------------- #
+def has_conformal_ivim() -> bool:
+    """Return ``True`` when canonical ``conformal_ivim`` is installed in the runtime."""
+    return importlib.util.find_spec("conformal_ivim") is not None
+
+
+def _load_conformal_submodule() -> Any | None:
+    if has_conformal_ivim():
+        return importlib.import_module("conformal_ivim.conformal")
+    return None
+
+
 def conformity_scores(q_lo: np.ndarray, q_hi: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Conformalized quantile regression (CQR) scores ``max(q_lo - y, y - q_hi)``."""
     return np.maximum(
@@ -743,12 +759,17 @@ def conformity_scores(q_lo: np.ndarray, q_hi: np.ndarray, y: np.ndarray) -> np.n
     )
 
 
-def conformal_offset(scores: np.ndarray, alpha: float) -> float:
+def conformal_offset(scores: np.ndarray, alpha: float, *, use_external: bool = True) -> float:
     """Finite-sample ``ceil((n + 1)(1 - alpha)) / n`` empirical quantile of ``scores``."""
     s = np.asarray(scores, dtype=np.float64)
     n = s.shape[0]
     if n == 0:
         return 0.0
+    if use_external:
+        ext = _load_conformal_submodule()
+        if ext is not None and hasattr(ext, "conformal_quantile"):
+            q = float(ext.conformal_quantile(s, float(alpha)))
+            return float(np.max(s)) if not np.isfinite(q) else q
     level = min(max(np.ceil((n + 1) * (1.0 - float(alpha))) / n, 0.0), 1.0)
     return float(np.quantile(s, level, method="higher"))
 
@@ -758,20 +779,45 @@ class SplitConformalResidual:
     """Distribution-free split-conformal intervals ``point +/- Q`` around point estimates."""
 
     alpha: float = 0.10
+    use_external: bool = True
 
     def __post_init__(self) -> None:
         if not (0.0 < float(self.alpha) < 1.0):
             raise ValueError(f"`alpha` must lie in (0, 1); got {self.alpha}.")
         self.offsets_: np.ndarray | None = None
+        self.backend: str = (
+            "conformal_ivim" if (self.use_external and has_conformal_ivim()) else "ivimbench_builtin"
+        )
+        self._cal_pred: np.ndarray | None = None
+        self._cal_true: np.ndarray | None = None
 
     def calibrate(self, point_cal: np.ndarray, y_cal: np.ndarray) -> SplitConformalResidual:
         p_cal = np.asarray(point_cal, dtype=np.float64)
         truth = np.asarray(y_cal, dtype=np.float64)
         if p_cal.shape != truth.shape or p_cal.ndim != 2:
             raise ValueError("`point_cal` and `y_cal` must both have shape (n_cal, n_params).")
+        self._cal_pred = p_cal.copy()
+        self._cal_true = truth.copy()
+        ext = _load_conformal_submodule() if self.use_external else None
+        if ext is not None and hasattr(ext, "split_conformal"):
+            self.backend = "conformal_ivim"
+            offsets = []
+            dummy = np.zeros(1, dtype=np.float64)
+            for j in range(p_cal.shape[1]):
+                _, _, q_j = ext.split_conformal(p_cal[:, j], truth[:, j], dummy, float(self.alpha))
+                if not np.isfinite(q_j):
+                    q_j = float(np.max(np.abs(truth[:, j] - p_cal[:, j]))) if p_cal.shape[0] else 0.0
+                offsets.append(float(q_j))
+            self.offsets_ = np.asarray(offsets, dtype=np.float64)
+            return self
+
+        self.backend = "ivimbench_builtin"
         scores = np.abs(truth - p_cal)
         self.offsets_ = np.array(
-            [conformal_offset(scores[:, j], self.alpha) for j in range(scores.shape[1])],
+            [
+                conformal_offset(scores[:, j], self.alpha, use_external=False)
+                for j in range(scores.shape[1])
+            ],
             dtype=np.float64,
         )
         return self
@@ -780,6 +826,29 @@ class SplitConformalResidual:
         if self.offsets_ is None:
             raise RuntimeError("Call `calibrate()` before `apply()`.")
         p_test = np.asarray(point_test, dtype=np.float64)
+        ext = _load_conformal_submodule() if self.use_external else None
+        if (
+            ext is not None
+            and hasattr(ext, "split_conformal")
+            and self._cal_pred is not None
+            and self._cal_true is not None
+        ):
+            self.backend = "conformal_ivim"
+            lo_cols = []
+            hi_cols = []
+            for j in range(p_test.shape[1]):
+                lo_j, hi_j, q_j = ext.split_conformal(
+                    self._cal_pred[:, j],
+                    self._cal_true[:, j],
+                    p_test[:, j],
+                    float(self.alpha),
+                )
+                if not np.isfinite(q_j):
+                    lo_j = p_test[:, j] - self.offsets_[j]
+                    hi_j = p_test[:, j] + self.offsets_[j]
+                lo_cols.append(np.asarray(lo_j, dtype=np.float64))
+                hi_cols.append(np.asarray(hi_j, dtype=np.float64))
+            return np.column_stack(lo_cols), np.column_stack(hi_cols)
         return p_test - self.offsets_[None, :], p_test + self.offsets_[None, :]
 
     def calibrate_apply(
@@ -796,6 +865,7 @@ class SplitConformalQuantile:
     """Conformalized Quantile Regression (CQR; Romano et al. 2019) over ``(n, P, L)`` quantiles."""
 
     q_levels: Sequence[float] | np.ndarray = DEFAULT_QUANTILE_LEVELS
+    use_external: bool = True
 
     def __post_init__(self) -> None:
         self.q_levels = np.asarray(self.q_levels, dtype=np.float64)
@@ -803,6 +873,11 @@ class SplitConformalQuantile:
             raise ValueError("`q_levels` must be strictly ascending.")
         self.offsets_: list[dict[tuple[int, int], float]] = []
         self._n_params: int | None = None
+        self.backend: str = (
+            "conformal_ivim" if (self.use_external and has_conformal_ivim()) else "ivimbench_builtin"
+        )
+        self._q_cal: np.ndarray | None = None
+        self._y_cal: np.ndarray | None = None
 
     def calibrate(self, q_pred_cal: np.ndarray, y_cal: np.ndarray) -> SplitConformalQuantile:
         q_cal = np.asarray(q_pred_cal, dtype=np.float64)
@@ -812,14 +887,35 @@ class SplitConformalQuantile:
         if truth.shape != (n, n_params) or n_levels != levels.size:
             raise ValueError("Shape mismatch between `q_pred_cal`, `y_cal`, and `q_levels`.")
         self._n_params = n_params
+        self._q_cal = q_cal.copy()
+        self._y_cal = truth.copy()
+        ext = _load_conformal_submodule() if self.use_external else None
+        use_ext_cqr = ext is not None and hasattr(ext, "cqr")
+        self.backend = "conformal_ivim" if use_ext_cqr else "ivimbench_builtin"
         self.offsets_ = []
+        dummy = np.zeros(1, dtype=np.float64)
         for p in range(n_params):
             off: dict[tuple[int, int], float] = {}
             for j in range(n_levels // 2):
                 j_lo, j_hi = j, n_levels - 1 - j
                 a = 2.0 * float(levels[j_lo])
-                scores = conformity_scores(q_cal[:, p, j_lo], q_cal[:, p, j_hi], truth[:, p])
-                off[(j_lo, j_hi)] = conformal_offset(scores, a)
+                if use_ext_cqr:
+                    assert ext is not None
+                    _, _, q_val = ext.cqr(
+                        q_cal[:, p, j_lo],
+                        q_cal[:, p, j_hi],
+                        truth[:, p],
+                        dummy,
+                        dummy,
+                        a,
+                    )
+                    if not np.isfinite(q_val):
+                        scores = conformity_scores(q_cal[:, p, j_lo], q_cal[:, p, j_hi], truth[:, p])
+                        q_val = float(np.max(scores)) if scores.size else 0.0
+                    off[(j_lo, j_hi)] = float(q_val)
+                else:
+                    scores = conformity_scores(q_cal[:, p, j_lo], q_cal[:, p, j_hi], truth[:, p])
+                    off[(j_lo, j_hi)] = conformal_offset(scores, a, use_external=False)
             self.offsets_.append(off)
         return self
 
@@ -848,6 +944,7 @@ class MondrianConformalQuantile:
     """Group-conditional (Mondrian) CQR fitting independent offsets per group label."""
 
     q_levels: Sequence[float] | np.ndarray = DEFAULT_QUANTILE_LEVELS
+    use_external: bool = True
 
     def __post_init__(self) -> None:
         self.q_levels = np.asarray(self.q_levels, dtype=np.float64)
@@ -855,6 +952,12 @@ class MondrianConformalQuantile:
             raise ValueError("`q_levels` must be strictly ascending.")
         self.group_models_: dict[Any, SplitConformalQuantile] = {}
         self.global_: SplitConformalQuantile | None = None
+        self.backend: str = (
+            "conformal_ivim" if (self.use_external and has_conformal_ivim()) else "ivimbench_builtin"
+        )
+        self._q_cal: np.ndarray | None = None
+        self._y_cal: np.ndarray | None = None
+        self._grp_cal: np.ndarray | None = None
 
     def calibrate(
         self,
@@ -865,14 +968,20 @@ class MondrianConformalQuantile:
         q_cal = np.asarray(q_pred_cal, dtype=np.float64)
         truth = np.asarray(y_cal, dtype=np.float64)
         grp = np.asarray(groups_cal)
+        self._q_cal = q_cal.copy()
+        self._y_cal = truth.copy()
+        self._grp_cal = grp.copy()
         self.group_models_ = {}
         for g in np.unique(grp):
             key = g.item() if hasattr(g, "item") else g
             mask = grp == g
-            self.group_models_[key] = SplitConformalQuantile(self.q_levels).calibrate(
-                q_cal[mask], truth[mask]
-            )
-        self.global_ = SplitConformalQuantile(self.q_levels).calibrate(q_cal, truth)
+            self.group_models_[key] = SplitConformalQuantile(
+                self.q_levels, use_external=self.use_external
+            ).calibrate(q_cal[mask], truth[mask])
+        self.global_ = SplitConformalQuantile(
+            self.q_levels, use_external=self.use_external
+        ).calibrate(q_cal, truth)
+        self.backend = self.global_.backend
         return self
 
     def apply(self, q_pred_test: np.ndarray, groups_test: np.ndarray) -> np.ndarray:
@@ -880,6 +989,45 @@ class MondrianConformalQuantile:
             raise RuntimeError("Call `calibrate()` before `apply()`.")
         q_test = np.asarray(q_pred_test, dtype=np.float64)
         grp = np.asarray(groups_test)
+        ext = _load_conformal_submodule() if self.use_external else None
+        if (
+            ext is not None
+            and hasattr(ext, "mondrian_cqr")
+            and self._q_cal is not None
+            and self._y_cal is not None
+            and self._grp_cal is not None
+        ):
+            levels = np.asarray(self.q_levels, dtype=np.float64)
+            known_mask = np.isin(grp, np.unique(self._grp_cal))
+            if np.all(known_mask):
+                out = q_test.copy()
+                n_levels = levels.size
+                for p in range(q_test.shape[1]):
+                    for j in range(n_levels // 2):
+                        j_lo, j_hi = j, n_levels - 1 - j
+                        a = 2.0 * float(levels[j_lo])
+                        lo_m, hi_m = ext.mondrian_cqr(
+                            self._q_cal[:, p, j_lo],
+                            self._q_cal[:, p, j_hi],
+                            self._y_cal[:, p],
+                            self._grp_cal,
+                            q_test[:, p, j_lo],
+                            q_test[:, p, j_hi],
+                            grp,
+                            a,
+                        )
+                        if np.all(np.isfinite(lo_m)) and np.all(np.isfinite(hi_m)):
+                            out[:, p, j_lo] = lo_m
+                            out[:, p, j_hi] = hi_m
+                        else:
+                            for g_val in np.unique(grp):
+                                key = g_val.item() if hasattr(g_val, "item") else g_val
+                                m_g = grp == g_val
+                                model = self.group_models_.get(key, self.global_)
+                                out[m_g] = model.apply(q_test[m_g])
+                            return out
+                return np.sort(out, axis=2)
+
         out = q_test.copy()
         for g in np.unique(grp):
             key = g.item() if hasattr(g, "item") else g
@@ -897,3 +1045,210 @@ class MondrianConformalQuantile:
         groups_test: np.ndarray,
     ) -> np.ndarray:
         return self.calibrate(q_pred_cal, y_cal, groups_cal).apply(q_pred_test, groups_test)
+
+
+@dataclass
+class SequentialConformalCalibrator:
+    """Sequential online conformal interval calibrator (ACI & Conformal PID).
+
+    Delegates to ``conformal_ivim.conformal.aci_conformal`` and
+    ``conformal_ivim.AdaptiveConformalIVIM`` whenever ``conformal_ivim`` is installed,
+    falling back cleanly to standalone NumPy Gibbs-Candès ACI / Conformal-PID updates.
+    """
+
+    method: Literal["aci", "conformal_pid"] = "aci"
+    alpha: float = 0.10
+    gamma: float = 0.05
+    ki: float = 0.25
+    kd: float = 0.35
+    use_external: bool = True
+
+    def __post_init__(self) -> None:
+        m = str(self.method).strip().lower()
+        if m not in ("aci", "conformal_pid"):
+            raise ValueError(f"`method` must be 'aci' or 'conformal_pid'; got {self.method!r}.")
+        if not (0.0 < float(self.alpha) < 1.0):
+            raise ValueError(f"`alpha` must lie in (0, 1); got {self.alpha}.")
+        if float(self.gamma) <= 0.0:
+            raise ValueError(f"`gamma` must be > 0; got {self.gamma}.")
+        self.method = m  # type: ignore[assignment]
+        self.backend: str = (
+            "conformal_ivim" if (self.use_external and has_conformal_ivim()) else "ivimbench_builtin"
+        )
+
+    def calibrate_stream(
+        self,
+        cal_pred: np.ndarray,
+        cal_true: np.ndarray,
+        stream_pred: np.ndarray,
+        stream_true: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Run online sequential interval calibration over 1D ``(T,)`` or 2D ``(T, P)`` streams."""
+        c_pred = np.asarray(cal_pred, dtype=np.float64)
+        c_true = np.asarray(cal_true, dtype=np.float64)
+        s_pred = np.asarray(stream_pred, dtype=np.float64)
+        s_true = np.asarray(stream_true, dtype=np.float64)
+        squeeze = s_pred.ndim == 1
+        if squeeze:
+            c_pred = c_pred.reshape(-1, 1)
+            c_true = c_true.reshape(-1, 1)
+            s_pred = s_pred.reshape(-1, 1)
+            s_true = s_true.reshape(-1, 1)
+
+        n_steps, n_params = s_pred.shape
+        ext = _load_conformal_submodule() if self.use_external else None
+
+        if self.method == "aci" and ext is not None and hasattr(ext, "aci_conformal"):
+            self.backend = "conformal_ivim"
+            lo_cols, hi_cols, tr_cols = [], [], []
+            for j in range(n_params):
+                lo_j, hi_j, tr_j = ext.aci_conformal(
+                    c_pred[:, j],
+                    c_true[:, j],
+                    s_pred[:, j],
+                    s_true[:, j],
+                    alpha=float(self.alpha),
+                    gamma=float(self.gamma),
+                )
+                lo_cols.append(np.asarray(lo_j, dtype=np.float64))
+                hi_cols.append(np.asarray(hi_j, dtype=np.float64))
+                tr_cols.append(np.asarray(tr_j, dtype=np.float64))
+            lo_out = np.column_stack(lo_cols)
+            hi_out = np.column_stack(hi_cols)
+            tr_out = np.column_stack(tr_cols)
+            if squeeze:
+                return lo_out[:, 0], hi_out[:, 0], tr_out[:, 0]
+            return lo_out, hi_out, tr_out
+
+        # Standalone NumPy ACI / Conformal-PID online tracker
+        self.backend = (
+            "conformal_ivim"
+            if (self.use_external and has_conformal_ivim() and self.method == "conformal_pid")
+            else "ivimbench_builtin"
+        )
+        lo_out = np.empty((n_steps, n_params), dtype=np.float64)
+        hi_out = np.empty((n_steps, n_params), dtype=np.float64)
+        tr_out = np.empty((n_steps, n_params), dtype=np.float64)
+
+        for j in range(n_params):
+            cal_scores = np.abs(c_true[:, j] - c_pred[:, j])
+            q_init = conformal_offset(cal_scores, self.alpha, use_external=self.use_external)
+            scale = max(float(np.std(cal_scores)), q_init, 1e-8)
+            if self.method == "aci":
+                alpha_t = float(self.alpha)
+                for t in range(n_steps):
+                    tr_out[t, j] = alpha_t
+                    q_t = conformal_offset(cal_scores, alpha_t, use_external=False)
+                    lo_out[t, j] = s_pred[t, j] - q_t
+                    hi_out[t, j] = s_pred[t, j] + q_t
+                    err_t = 1.0 if (s_true[t, j] < lo_out[t, j] or s_true[t, j] > hi_out[t, j]) else 0.0
+                    alpha_t = float(
+                        np.clip(alpha_t + float(self.gamma) * (float(self.alpha) - err_t), 1e-4, 1.0 - 1e-4)
+                    )
+            else:
+                q_t = q_init
+                err_sum = 0.0
+                prev_score = float(np.median(cal_scores)) if cal_scores.size else q_init
+                for t in range(n_steps):
+                    tr_out[t, j] = q_t
+                    lo_out[t, j] = s_pred[t, j] - q_t
+                    hi_out[t, j] = s_pred[t, j] + q_t
+                    score_t = float(abs(s_true[t, j] - s_pred[t, j]))
+                    err_t = 1.0 if score_t > q_t else 0.0
+                    deficit = err_t - float(self.alpha)
+                    err_sum += deficit
+                    sat = float(np.tan(np.clip(err_sum / max(np.sqrt(t + 1.0), 1.0), -1.35, 1.35)))
+                    trend = score_t - prev_score
+                    prev_score = 0.5 * prev_score + 0.5 * score_t
+                    q_t = max(
+                        0.0,
+                        q_t
+                        + float(self.gamma) * scale * deficit
+                        + float(self.ki) * 0.05 * scale * sat
+                        + float(self.kd) * 0.15 * max(trend, 0.0),
+                    )
+
+        if squeeze:
+            return lo_out[:, 0], hi_out[:, 0], tr_out[:, 0]
+        return lo_out, hi_out, tr_out
+
+
+def calibrate_conformal_intervals(
+    method: Literal["split", "cqr", "mondrian", "aci", "conformal_pid"],
+    *,
+    cal_pred: np.ndarray | None = None,
+    cal_true: np.ndarray,
+    test_pred: np.ndarray | None = None,
+    cal_lo: np.ndarray | None = None,
+    cal_hi: np.ndarray | None = None,
+    test_lo: np.ndarray | None = None,
+    test_hi: np.ndarray | None = None,
+    groups_cal: np.ndarray | None = None,
+    groups_test: np.ndarray | None = None,
+    stream_true: np.ndarray | None = None,
+    alpha: float = 0.10,
+    gamma: float = 0.05,
+    use_external: bool = True,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Unified interval calibration entry point delegating to ``conformal_ivim`` when installed."""
+    m = str(method).strip().lower()
+    y_cal = np.asarray(cal_true, dtype=np.float64)
+    squeeze = y_cal.ndim == 1
+    if squeeze:
+        y_cal_2d = y_cal[:, None]
+    else:
+        y_cal_2d = y_cal
+
+    if m == "split":
+        if cal_pred is None or test_pred is None:
+            raise ValueError("`cal_pred` and `test_pred` are required for method='split'.")
+        cp = np.asarray(cal_pred, dtype=np.float64)
+        tp = np.asarray(test_pred, dtype=np.float64)
+        if squeeze:
+            cp = cp[:, None]
+            tp = tp[:, None]
+        calibrator = SplitConformalResidual(alpha=alpha, use_external=use_external)
+        lo, hi = calibrator.calibrate_apply(cp, y_cal_2d, tp)
+        return (lo[:, 0], hi[:, 0], calibrator.backend) if squeeze else (lo, hi, calibrator.backend)
+
+    if m in ("cqr", "mondrian"):
+        if cal_lo is None or cal_hi is None or test_lo is None or test_hi is None:
+            raise ValueError("`cal_lo`, `cal_hi`, `test_lo`, and `test_hi` are required for CQR/Mondrian.")
+        clo = np.asarray(cal_lo, dtype=np.float64)
+        chi = np.asarray(cal_hi, dtype=np.float64)
+        tlo = np.asarray(test_lo, dtype=np.float64)
+        thi = np.asarray(test_hi, dtype=np.float64)
+        if squeeze:
+            clo, chi = clo[:, None], chi[:, None]
+            tlo, thi = tlo[:, None], thi[:, None]
+        levels = np.array([0.5 * alpha, 0.5, 1.0 - 0.5 * alpha], dtype=np.float64)
+        q_cal = np.stack([clo, 0.5 * (clo + chi), chi], axis=-1)
+        q_test = np.stack([tlo, 0.5 * (tlo + thi), thi], axis=-1)
+        if m == "cqr":
+            cqr_cal = SplitConformalQuantile(q_levels=levels, use_external=use_external)
+            q_out = cqr_cal.calibrate_apply(q_cal, y_cal_2d, q_test)
+            lo, hi = q_out[:, :, 0], q_out[:, :, 2]
+            return (lo[:, 0], hi[:, 0], cqr_cal.backend) if squeeze else (lo, hi, cqr_cal.backend)
+        if groups_cal is None or groups_test is None:
+            raise ValueError("`groups_cal` and `groups_test` are required for method='mondrian'.")
+        mond_cal = MondrianConformalQuantile(q_levels=levels, use_external=use_external)
+        q_out = mond_cal.calibrate_apply(q_cal, y_cal_2d, groups_cal, q_test, groups_test)
+        lo, hi = q_out[:, :, 0], q_out[:, :, 2]
+        return (lo[:, 0], hi[:, 0], mond_cal.backend) if squeeze else (lo, hi, mond_cal.backend)
+
+    if m in ("aci", "conformal_pid"):
+        if cal_pred is None or test_pred is None or stream_true is None:
+            raise ValueError(
+                "`cal_pred`, `test_pred`, and `stream_true` are required for sequential methods."
+            )
+        seq_cal = SequentialConformalCalibrator(
+            method=m,  # type: ignore[arg-type]
+            alpha=alpha,
+            gamma=gamma,
+            use_external=use_external,
+        )
+        lo, hi, _ = seq_cal.calibrate_stream(cal_pred, y_cal, test_pred, stream_true)
+        return lo, hi, seq_cal.backend
+
+    raise ValueError(f"Unsupported conformal method {method!r}.")
+

@@ -38,7 +38,7 @@ from ivimbench.phantoms.synthetic import generate_cohort, ivim_biexp
 
 
 def test_version_is_current() -> None:
-    assert __version__ == "1.5.0"
+    assert __version__ == "1.6.0"
 
 
 def test_anomalous_jacobian_central_differences_and_adc_reduction() -> None:

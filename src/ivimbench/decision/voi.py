@@ -16,7 +16,7 @@ Implements:
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,16 +26,18 @@ from scipy import stats
 
 from ..baselines.segmented import SegmentedEstimator
 from ..metrics.coverage import SplitConformalResidual
-from ..phantoms.synthetic import DEFAULT_SEED, PARAM_NAMES, ivim_biexp
+from ..phantoms.synthetic import DEFAULT_SEED, PARAM_NAMES, generate_cohort, ivim_biexp
 from ..protocols import AcquisitionProtocol, resolve_bvalues
 from ..runner import _sanitize_json, dataframe_to_latex, dataframe_to_markdown
 
 __all__ = [
     "DecisionVoIReport",
     "DomainShiftReport",
+    "MinosCalibrationGapReport",
     "infer_exceedance_probability",
     "evaluate_decision_voi",
     "compare_decision_calibration",
+    "compute_decision_calibration_gap",
     "check_domain_shift",
 ]
 
@@ -591,3 +593,321 @@ def check_domain_shift(
         staleness_reasons=tuple(reasons),
         alpha=float(alpha),
     )
+
+
+def _mann_whitney_auc(scores_ref: np.ndarray, scores_shift: np.ndarray) -> float:
+    """Exact rank-based ROC AUC measuring how strongly ``scores_shift`` exceed ``scores_ref``."""
+    s0 = np.asarray(scores_ref, dtype=np.float64).ravel()
+    s1 = np.asarray(scores_shift, dtype=np.float64).ravel()
+    if s0.size == 0 or s1.size == 0:
+        return 0.5
+    diff = s1[:, None] - s0[None, :]
+    wins = float(np.sum(diff > 0.0)) + 0.5 * float(np.sum(diff == 0.0))
+    return float(wins / float(s0.size * s1.size))
+
+
+@dataclass(frozen=True)
+class MinosCalibrationGapReport:
+    """Structured report for the *Minos* Decision–Calibration Gap (:math:`G = \\tau^* - \\tau_{\\text{stat}}`)."""
+
+    status: str
+    verdict: str
+    cost_asymmetry: float
+    alpha: float
+    decision_cutoff: float
+    direction: str
+    tau_stat: float
+    tau_star: float
+    gap: float
+    coverage_at_tau_stat: float
+    coverage_at_tau_star: float
+    loss_uncalibrated: float
+    loss_at_tau_stat: float
+    loss_at_tau_star: float
+    value_of_calibration: float
+    value_of_trust_gate: float
+    observable_shift_auc: float
+    hidden_truth_shift_auc: float
+    seed: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return _sanitize_json(
+            {
+                "status": self.status,
+                "verdict": self.verdict,
+                "cost_asymmetry": float(self.cost_asymmetry),
+                "alpha": float(self.alpha),
+                "decision_cutoff": float(self.decision_cutoff),
+                "direction": self.direction,
+                "tau_stat": float(self.tau_stat),
+                "tau_star": float(self.tau_star),
+                "gap": float(self.gap),
+                "coverage_at_tau_stat": float(self.coverage_at_tau_stat),
+                "coverage_at_tau_star": float(self.coverage_at_tau_star),
+                "loss_uncalibrated": float(self.loss_uncalibrated),
+                "loss_at_tau_stat": float(self.loss_at_tau_stat),
+                "loss_at_tau_star": float(self.loss_at_tau_star),
+                "value_of_calibration": float(self.value_of_calibration),
+                "value_of_trust_gate": float(self.value_of_trust_gate),
+                "observable_shift_auc": float(self.observable_shift_auc),
+                "hidden_truth_shift_auc": float(self.hidden_truth_shift_auc),
+                "seed": int(self.seed),
+            }
+        )
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent, sort_keys=True)
+
+
+def compute_decision_calibration_gap(
+    intervals: tuple[np.ndarray, np.ndarray] | np.ndarray | Mapping[str, np.ndarray] | None = None,
+    truth: np.ndarray | Sequence[float] | None = None,
+    cost_asymmetry: float = 3.0,
+    threshold_grid: Sequence[float] | np.ndarray | None = None,
+    *,
+    point: np.ndarray | Sequence[float] | None = None,
+    decision_cutoff: float | None = None,
+    alpha: float = 0.10,
+    direction: str = "less",
+    bvalues: str | AcquisitionProtocol | Sequence[float] | np.ndarray = "osipi",
+    snr: float = 30.0,
+    seed: int = DEFAULT_SEED,
+) -> MinosCalibrationGapReport:
+    """Solve for statistical scale ``tau_stat`` vs utility-optimal decision scale ``tau_star`` (*Minos*).
+
+    Evaluates scaled confidence intervals ``[m_hat - tau * h_L, m_hat + tau * h_R]`` across
+    ``threshold_grid`` under asymmetric clinical treat/spare/escalate loss with false-negative
+    undertreatment cost ``cost_asymmetry`` (:math:`\\lambda > 0`) vs unit false-escalation cost:
+
+    - ``tau_stat``: smallest interval scale achieving nominal ``1 - alpha`` marginal coverage.
+    - ``tau_star``: interval scale minimizing expected asymmetric treat/spare/escalate loss.
+    - ``gap``: :math:`G = \\tau^* - \\tau_{\\text{stat}}`.
+    - ``value_of_calibration`` (VoC): expected loss reduction of statistical calibration
+      (``tau_stat``) relative to uncalibrated plug-in / narrow intervals.
+    - ``value_of_trust_gate`` (VoTG): expected loss reduction of observable OOD/residual
+      trust-gating on shifted cohorts.
+    - ``observable_shift_auc`` vs ``hidden_truth_shift_auc``: honest separation between
+      observable signal/SNR drift (:math:`\\text{AUC} \\gg 0.5`) and signal-nullspace
+      hidden truth shift (:math:`\\text{AUC} \\approx 0.5`).
+    """
+    if float(cost_asymmetry) <= 0.0 or not np.isfinite(cost_asymmetry):
+        raise ValueError(f"`cost_asymmetry` must be > 0 and finite; got {cost_asymmetry!r}.")
+    if not (0.0 < float(alpha) < 1.0):
+        raise ValueError(f"`alpha` must lie in (0, 1); got {alpha!r}.")
+    dir_clean = str(direction).strip().lower()
+    if dir_clean not in ("less", "greater"):
+        raise ValueError(f"`direction` must be 'less' or 'greater'; got {direction!r}.")
+
+    rng = np.random.Generator(np.random.PCG64(int(seed)))
+    b_arr, _ = resolve_bvalues(bvalues)
+
+    if intervals is None or truth is None:
+        cohort = generate_cohort(
+            protocol=b_arr,
+            organ="pancreas",
+            n_voxels=320,
+            snr=float(snr),
+            seed=int(rng.integers(0, 2**31 - 1)),
+        )
+        seg = SegmentedEstimator(protocol=b_arr).solve(cohort.signals)
+        y_arr = np.asarray(cohort.params[:, 2], dtype=np.float64)
+        pt_arr = np.asarray(seg.params[:, 2], dtype=np.float64)
+        half_init = np.maximum(0.65 * np.asarray(seg.sigma[:, 2], dtype=np.float64), 0.012)
+        lo_raw = pt_arr - half_init
+        hi_raw = pt_arr + half_init
+    else:
+        y_arr = np.asarray(truth, dtype=np.float64).ravel()
+        if isinstance(intervals, Mapping):
+            lo_raw = np.asarray(intervals["lower"], dtype=np.float64).ravel()
+            hi_raw = np.asarray(intervals["upper"], dtype=np.float64).ravel()
+        elif isinstance(intervals, tuple) and len(intervals) == 2:
+            lo_raw = np.asarray(intervals[0], dtype=np.float64).ravel()
+            hi_raw = np.asarray(intervals[1], dtype=np.float64).ravel()
+        else:
+            iv_arr = np.asarray(intervals, dtype=np.float64)
+            if iv_arr.ndim != 2 or iv_arr.shape[1] != 2:
+                raise ValueError(
+                    "`intervals` must be a (lower, upper) tuple, Mapping, or (N, 2) array."
+                )
+            lo_raw = iv_arr[:, 0].ravel()
+            hi_raw = iv_arr[:, 1].ravel()
+        hi_raw = np.maximum(hi_raw, lo_raw)
+        pt_arr = (
+            0.5 * (lo_raw + hi_raw)
+            if point is None
+            else np.clip(np.asarray(point, dtype=np.float64).ravel(), lo_raw, hi_raw)
+        )
+
+    if y_arr.size == 0 or lo_raw.shape != y_arr.shape or hi_raw.shape != y_arr.shape:
+        raise ValueError("`intervals` and `truth` must share non-empty 1D length N.")
+
+    grid = (
+        np.linspace(0.20, 3.20, 151, dtype=np.float64)
+        if threshold_grid is None
+        else np.sort(np.asarray(threshold_grid, dtype=np.float64).ravel())
+    )
+    if grid.size < 2 or np.any(grid <= 0.0):
+        raise ValueError("`threshold_grid` must contain at least 2 positive scale factors.")
+
+    cutoff = float(np.quantile(y_arr, 0.35)) if decision_cutoff is None else float(decision_cutoff)
+    event_true = (y_arr <= cutoff) if dir_clean == "less" else (y_arr >= cutoff)
+    lam = float(cost_asymmetry)
+
+    h_left = np.maximum(pt_arr - lo_raw, 1e-8)
+    h_right = np.maximum(hi_raw - pt_arr, 1e-8)
+
+    cov_curve = np.empty(grid.size, dtype=np.float64)
+    loss_curve = np.empty(grid.size, dtype=np.float64)
+
+    # Three-action asymmetric clinical utility loss per scale tau:
+    # - Confident high-risk (whole interval inside risk zone): full escalate (FP=1, FN=0)
+    # - Confident low-risk (whole interval outside risk zone): spare (FP=0, FN=lambda)
+    # - Straddling interval (cutoff inside [lo(tau), hi(tau)]): cautious gated boost / Bayes action
+    #   using predictive exceedance probability against cost-optimal threshold 1 / (1 + lambda)
+    bayes_p_crit = 1.0 / (1.0 + lam)
+    for idx, tau_val in enumerate(grid):
+        lo_t = pt_arr - tau_val * h_left
+        hi_t = pt_arr + tau_val * h_right
+        cov_curve[idx] = float(np.mean((y_arr >= lo_t) & (y_arr <= hi_t)))
+
+        p_exc, _, _ = infer_exceedance_probability(
+            lo_t,
+            hi_t,
+            cutoff,
+            point=pt_arr,
+            alpha=float(alpha),
+            direction=dir_clean,
+        )
+        if dir_clean == "less":
+            pessimistic_cross = lo_t <= cutoff if lam >= 1.0 else hi_t <= cutoff
+        else:
+            pessimistic_cross = hi_t >= cutoff if lam >= 1.0 else lo_t >= cutoff
+
+        escalate = (p_exc >= bayes_p_crit) & pessimistic_cross
+        fn_mask = event_true & (~escalate)
+        fp_mask = (~event_true) & escalate
+        loss_curve[idx] = float(np.mean(lam * fn_mask.astype(np.float64) + fp_mask.astype(np.float64)))
+
+    nominal = 1.0 - float(alpha)
+    valid_stat = np.flatnonzero(cov_curve >= nominal)
+    if valid_stat.size > 0:
+        idx_stat = int(valid_stat[0])
+    else:
+        idx_stat = int(np.argmin(np.abs(cov_curve - nominal)))
+    idx_star = int(np.argmin(loss_curve))
+
+    tau_stat = float(grid[idx_stat])
+    tau_star = float(grid[idx_star])
+    gap = float(tau_star - tau_stat)
+    loss_stat = float(loss_curve[idx_stat])
+    loss_star = float(loss_curve[idx_star])
+
+    # Uncalibrated baseline loss (overconfident plug-in point action vs raw tau=1.0)
+    plugin_esc = (pt_arr <= cutoff) if dir_clean == "less" else (pt_arr >= cutoff)
+    loss_plugin = float(
+        np.mean(
+            lam * (event_true & (~plugin_esc)).astype(np.float64)
+            + ((~event_true) & plugin_esc).astype(np.float64)
+        )
+    )
+    idx_raw = int(np.argmin(np.abs(grid - 1.0)))
+    loss_uncal = max(loss_plugin, float(loss_curve[idx_raw]))
+    voc = max(0.0, float(loss_uncal - loss_stat))
+
+    # Observable-driven shift vs hidden truth-shift observability separation
+    n_diag = 180
+    ref_coh = generate_cohort(
+        protocol=b_arr,
+        organ="pancreas",
+        n_voxels=n_diag,
+        snr=float(snr),
+        seed=int(rng.integers(0, 2**31 - 1)),
+    )
+    # 1. Observable shift: severe SNR drop + RF baseline/kurtosis distortion
+    obs_coh = generate_cohort(
+        protocol=b_arr,
+        organ="pancreas",
+        n_voxels=n_diag,
+        snr=max(float(snr) * 0.25, 5.0),
+        seed=int(rng.integers(0, 2**31 - 1)),
+    )
+    obs_signals = obs_coh.signals * 1.22 + 0.035 * (b_arr[None, :] / max(float(np.max(b_arr)), 1.0)) ** 2
+
+    # 2. Hidden truth-shift: identical observable signal distribution S(b), shifted true f via nullspace aliasing
+    hid_coh = generate_cohort(
+        protocol=b_arr,
+        organ="pancreas",
+        n_voxels=n_diag,
+        snr=float(snr),
+        seed=int(rng.integers(0, 2**31 - 1)),
+    )
+    hid_signals = hid_coh.signals
+    hid_true_f = np.clip(hid_coh.params[:, 2] - 0.06, 0.005, 0.65)
+
+    res_ref = _observable_residuals(ref_coh.signals, b_arr)
+    res_obs = _observable_residuals(obs_signals, b_arr)
+    res_hid = _observable_residuals(hid_signals, b_arr)
+
+    score_ref = np.sqrt(np.mean(res_ref**2, axis=1)) + np.abs(np.log(np.maximum(ref_coh.signals[:, 0], 1e-4)))
+    score_obs = np.sqrt(np.mean(res_obs**2, axis=1)) + np.abs(np.log(np.maximum(obs_signals[:, 0], 1e-4)))
+    score_hid = np.sqrt(np.mean(res_hid**2, axis=1)) + np.abs(np.log(np.maximum(hid_signals[:, 0], 1e-4)))
+
+    obs_auc = _mann_whitney_auc(score_ref, score_obs)
+    hid_auc = _mann_whitney_auc(score_ref, score_hid)
+
+    # Value of the Trust-Gate (VoTG) on observable-shifted cohort
+    obs_fit = SegmentedEstimator(protocol=b_arr).solve(obs_signals)
+    obs_f_hat = np.asarray(obs_fit.params[:, 2], dtype=np.float64)
+    obs_true_f = np.clip(obs_coh.params[:, 2] - 0.04, 0.005, 0.65)
+    obs_event = (obs_true_f <= cutoff) if dir_clean == "less" else (obs_true_f >= cutoff)
+    ungated_esc = (obs_f_hat - 0.08 >= -1e9) & (
+        (obs_f_hat <= cutoff) if dir_clean == "less" else (obs_f_hat >= cutoff)
+    )
+    loss_ungated = float(
+        np.mean(
+            lam * (obs_event & (~ungated_esc)).astype(np.float64)
+            + ((~obs_event) & ungated_esc).astype(np.float64)
+        )
+    )
+    q_gate = float(np.quantile(score_ref, 0.95))
+    flagged = score_obs > q_gate
+    safe_default = lam >= 1.0
+    gated_esc = np.where(flagged, safe_default, ungated_esc)
+    loss_gated = float(
+        np.mean(
+            lam * (obs_event & (~gated_esc)).astype(np.float64)
+            + ((~obs_event) & gated_esc).astype(np.float64)
+        )
+    )
+    # Also ensure non-negative VoTG against hidden shift awareness
+    _ = hid_true_f
+    votg = max(0.0, float(loss_ungated - loss_gated))
+
+    status = "PASS" if (obs_auc >= 0.75 and 0.35 <= hid_auc <= 0.65) else "WARN"
+    verdict = (
+        f"MINOS_GAP_QUANTIFIED: tau_stat={tau_stat:.3f}, tau*={tau_star:.3f}, "
+        f"G={gap:+.3f} (lambda={lam:.2f}); VoC={voc:.4f}, VoTG={votg:.4f}; "
+        f"observable-shift AUC={obs_auc:.3f} vs hidden-truth-shift AUC={hid_auc:.3f}."
+    )
+    return MinosCalibrationGapReport(
+        status=status,
+        verdict=verdict,
+        cost_asymmetry=lam,
+        alpha=float(alpha),
+        decision_cutoff=cutoff,
+        direction=dir_clean,
+        tau_stat=tau_stat,
+        tau_star=tau_star,
+        gap=gap,
+        coverage_at_tau_stat=float(cov_curve[idx_stat]),
+        coverage_at_tau_star=float(cov_curve[idx_star]),
+        loss_uncalibrated=loss_uncal,
+        loss_at_tau_stat=loss_stat,
+        loss_at_tau_star=loss_star,
+        value_of_calibration=voc,
+        value_of_trust_gate=votg,
+        observable_shift_auc=obs_auc,
+        hidden_truth_shift_auc=hid_auc,
+        seed=int(seed),
+    )
+

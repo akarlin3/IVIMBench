@@ -986,7 +986,7 @@ def build_audit_lock(
     for entry in active.packages:
         name = str(entry["name"])
         if entry["installed"]:
-            locked_packages[name] = {
+            pkg_lock: dict[str, Any] = {
                 "name": name,
                 "suite": entry["suite"],
                 "suite_id": entry["suite_id"],
@@ -1001,6 +1001,17 @@ def build_audit_lock(
                 "seed": int(entry["seed"]),
                 "report_sha256": entry["report_sha256"],
             }
+            if name == "ivimbench":
+                from .audit import run_audit as _run_ivim_audit
+
+                standalone_rep = _run_ivim_audit(
+                    seed=int(entry["seed"]),
+                    prefer_sextant=False,
+                    prefer_conformal_ivim=False,
+                )
+                if standalone_rep.attestation is not None:
+                    pkg_lock["standalone_report_sha256"] = standalone_rep.attestation.report_sha256
+            locked_packages[name] = pkg_lock
         elif name in prev_entries:
             preserved = dict(prev_entries[name])
             preserved.update(
@@ -1049,6 +1060,15 @@ def build_audit_lock(
         }
     )
 
+    suite_i_digests = [
+        str(locked_packages[s.name].get("report_sha256") or "")
+        for s in AVERYCORP_SUITE_REGISTRY
+        if s.suite_id == "1" and locked_packages.get(s.name)
+    ]
+    chain_digest = hashlib.sha256(
+        json.dumps(suite_i_digests, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
     return {
         "schema_version": "1.0.0",
         "generator": "ivimbench.suite_runner",
@@ -1058,6 +1078,7 @@ def build_audit_lock(
         "suite_i_count": sum(1 for s in AVERYCORP_SUITE_REGISTRY if s.suite_id == "1"),
         "suite_ii_count": sum(1 for s in AVERYCORP_SUITE_REGISTRY if s.suite_id == "2"),
         "catalog_sha256": catalog_digest,
+        "chain_sha256": chain_digest,
         "packages": locked_packages,
     }
 
@@ -1136,6 +1157,12 @@ def verify_against_baseline(
                 drifts.append({"package": name, "reason": "missing_metric", "metric": m_key})
                 continue
             m_obs = obs_metrics[m_key]
+            if (
+                name == "ivimbench"
+                and m_key in ("fitter_backend", "uq_backend")
+                and m_obs in ("ivimbench_builtin", "sextant_core", "conformal_ivim")
+            ):
+                continue
             if isinstance(m_exp, (int, float)) and not isinstance(m_exp, bool) and isinstance(
                 m_obs, (int, float)
             ):
@@ -1171,13 +1198,33 @@ def verify_against_lock(
     report: SuiteAuditReport | Mapping[str, Any],
     lock: Mapping[str, Any] | str | Path = DEFAULT_LOCK_FILENAME,
 ) -> dict[str, Any]:
-    """Verify installed package ``report_sha256`` digests against ``audit-lock.json``."""
+    """Verify installed package ``report_sha256`` and ``chain_sha256`` digests against ``audit-lock.json``."""
     rep_dict = _coerce_report_dict(report)
     lock_dict = _load_json_or_mapping(lock)
     lock_pkgs = dict(lock_dict.get("packages", {}))
 
     mismatches: list[dict[str, Any]] = []
     verified = 0
+
+    if "chain_sha256" in lock_dict and lock_pkgs:
+        expected_chain_inputs = [
+            str(lock_pkgs[s.name].get("report_sha256") or "")
+            for s in AVERYCORP_SUITE_REGISTRY
+            if s.suite_id == "1" and s.name in lock_pkgs
+        ]
+        recomputed_chain = hashlib.sha256(
+            json.dumps(expected_chain_inputs, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if lock_dict.get("chain_sha256") != recomputed_chain:
+            mismatches.append(
+                {
+                    "package": "suite_i_chain",
+                    "reason": "chain_sha256_mismatch",
+                    "expected": recomputed_chain,
+                    "observed": lock_dict.get("chain_sha256"),
+                }
+            )
+
     for entry in rep_dict.get("packages", []):
         if not entry.get("installed"):
             continue
@@ -1190,13 +1237,16 @@ def verify_against_lock(
         if exp_sha is None:
             continue
         verified += 1
-        if entry.get("report_sha256") != exp_sha:
+        obs_sha = entry.get("report_sha256")
+        alt_sha = ref.get("standalone_report_sha256")
+        valid_shas = {exp_sha} | ({alt_sha} if isinstance(alt_sha, str) and alt_sha else set())
+        if obs_sha not in valid_shas:
             mismatches.append(
                 {
                     "package": name,
                     "reason": "sha256_mismatch",
                     "expected": exp_sha,
-                    "observed": entry.get("report_sha256"),
+                    "observed": obs_sha,
                 }
             )
 

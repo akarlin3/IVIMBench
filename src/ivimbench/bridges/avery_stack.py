@@ -27,12 +27,16 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
+from scipy.optimize import least_squares
 from scipy.stats import norm
 
 from ..baselines.crlb_estimator import crlb_normal_intervals
 from ..baselines.mlp import MLPEstimator
 from ..baselines.nlls import NLLSEstimator
+from ..baselines.segmented import SegmentedEstimator
 from ..metrics.coverage import (
+    SequentialConformalCalibrator,
+    SplitConformalResidual,
     conformal_offset,
     empirical_coverage,
 )
@@ -42,6 +46,7 @@ from ..metrics.railing import (
     bootstrap_railing_ci,
     classify_railing,
 )
+from ..metrics.sharpness import ivim_jacobian
 from ..phantoms.dro import generate_dro
 from ..phantoms.synthetic import DEFAULT_SEED, PARAM_NAMES, generate_cohort
 from ..protocols import AcquisitionProtocol, resolve_bvalues
@@ -52,14 +57,18 @@ __all__ = [
     "has_conformal_ivim",
     "has_sextant_ivim",
     "ecosystem_availability",
+    "CanonicalFitter",
+    "get_canonical_fitter",
+    "evaluate_deployment_shift",
+    "detect_voxel_ood",
     "ConformalIVIMEstimator",
     "SextantNLLSEstimator",
     "PipelineExecutionReport",
     "run_trust_value_action_pipeline",
 ]
 
-ConformalMethod = Literal["split", "cqr", "mondrian"]
-_VALID_CONFORMAL_METHODS: tuple[str, ...] = ("split", "cqr", "mondrian")
+ConformalMethod = Literal["split", "cqr", "mondrian", "aci", "conformal_pid"]
+_VALID_CONFORMAL_METHODS: tuple[str, ...] = ("split", "cqr", "mondrian", "aci", "conformal_pid")
 
 
 def has_conformal_ivim() -> bool:
@@ -127,6 +136,536 @@ def _clip_intervals_to_bounds(
         hi[:, j] = np.clip(hi[:, j], b_lo, b_hi)
     hi = np.maximum(hi, lo)
     return lo, hi
+
+
+class CanonicalFitter:
+    """License-safe forward fitter, 2D (b, TE) solver, CRLB, and railing facade.
+
+    Dynamically delegates to ``sextant_core`` when installed and ``prefer_sextant=True``,
+    falling back seamlessly to MIT-licensed ``ivimbench`` builtin solvers otherwise.
+    """
+
+    def __init__(
+        self,
+        *,
+        prefer_sextant: bool = True,
+        bounds: Mapping[str, tuple[float, float]] | None = None,
+        b_thresh: float = 200.0,
+        rail_tol: float = DEFAULT_RAIL_TOL,
+        snr: float = 30.0,
+        max_nfev: int = 120,
+        seed: int = DEFAULT_SEED,
+    ) -> None:
+        self.prefer_sextant = bool(prefer_sextant)
+        self.bounds: dict[str, tuple[float, float]] = dict(DEFAULT_PARAM_BOUNDS)
+        if bounds is not None:
+            for k, v in bounds.items():
+                key = "Dstar" if k == "D_star" else k
+                self.bounds[key] = (float(v[0]), float(v[1]))
+        self.b_thresh = float(b_thresh)
+        self.rail_tol = float(rail_tol)
+        self.snr = float(snr)
+        self.max_nfev = int(max_nfev)
+        self.seed = int(seed)
+
+    @property
+    def backend(self) -> str:
+        """Active forward-fitting backend identifier (`'sextant_core'` or `'ivimbench_builtin'`)."""
+        sextant_mod = _load_sextant_module() if self.prefer_sextant else None
+        return "sextant_core" if sextant_mod is not None else "ivimbench_builtin"
+
+    def classify_railing(
+        self,
+        values: np.ndarray | Sequence[float],
+        param: str = "Dstar",
+        *,
+        bounds: tuple[float, float] | None = None,
+        rel_tol: float | None = None,
+    ) -> dict[str, Any]:
+        """Classify boundary-railed parameter estimates via ``sextant_core`` or builtin fallback."""
+        key = "Dstar" if param == "D_star" else param
+        b_pair = bounds if bounds is not None else self.bounds.get(key, self.bounds["Dstar"])
+        tol = self.rail_tol if rel_tol is None else float(rel_tol)
+        arr = np.asarray(values, dtype=np.float64)
+        sextant_mod = _load_sextant_module() if self.prefer_sextant else None
+        if sextant_mod is not None and hasattr(sextant_mod, "classify_railing"):
+            raw = sextant_mod.classify_railing(arr, bounds_D_star=b_pair, rel_tol=tol)
+            r_mask = np.asarray(raw["railed_mask"], dtype=bool)
+            lo_mask = np.asarray(raw.get("lower_railed_mask", raw.get("lower_mask", False)), dtype=bool)
+            hi_mask = np.asarray(raw.get("upper_railed_mask", raw.get("upper_mask", False)), dtype=bool)
+            return {
+                "railed_mask": r_mask,
+                "lower_railed_mask": lo_mask,
+                "upper_railed_mask": hi_mask,
+                "lower_mask": lo_mask,
+                "upper_mask": hi_mask,
+                "railed_fraction": float(np.mean(r_mask)) if r_mask.size else 0.0,
+                "fitter_backend": "sextant_core",
+            }
+        fb = classify_railing(arr, b_pair, rel_tol=tol)
+        r_mask = np.asarray(fb["railed_mask"], dtype=bool)
+        lo_mask = np.asarray(fb.get("lower_railed_mask", fb.get("lower_mask", False)), dtype=bool)
+        hi_mask = np.asarray(fb.get("upper_railed_mask", fb.get("upper_mask", False)), dtype=bool)
+        return {
+            "railed_mask": r_mask,
+            "lower_railed_mask": lo_mask,
+            "upper_railed_mask": hi_mask,
+            "lower_mask": lo_mask,
+            "upper_mask": hi_mask,
+            "railed_fraction": float(
+                fb.get("railed_fraction", float(np.mean(r_mask)) if r_mask.size else 0.0)
+            ),
+            "fitter_backend": "ivimbench_builtin",
+        }
+
+    def fit(
+        self,
+        signals: np.ndarray,
+        bvalues: Sequence[float] | np.ndarray | str = "osipi",
+        *,
+        method: Literal["segmented", "nlls"] = "nlls",
+        b_thresh: float | None = None,
+    ) -> dict[str, Any]:
+        """Fit 1D IVIM curves (`'segmented'` or `'nlls'`) via ``sextant_core`` or builtin fallback."""
+        m_clean = str(method).strip().lower()
+        if m_clean not in ("segmented", "nlls"):
+            raise ValueError(f"`method` must be 'segmented' or 'nlls'; got {method!r}.")
+        sig = np.atleast_2d(np.asarray(signals, dtype=np.float64))
+        b_arr, _ = resolve_bvalues(bvalues)
+        eff_thresh = self.b_thresh if b_thresh is None else float(b_thresh)
+
+        sextant_mod = _load_sextant_module() if self.prefer_sextant else None
+        if sextant_mod is not None and hasattr(sextant_mod, "fit_ivim"):
+            res = sextant_mod.fit_ivim(
+                b_arr,
+                sig,
+                method=m_clean,
+                b_thresh=eff_thresh,
+                bounds_D=self.bounds["D"],
+                bounds_D_star=self.bounds["Dstar"],
+                bounds_f=self.bounds["f"],
+                rail_tol=self.rail_tol,
+            )
+            d_hat = np.atleast_1d(np.asarray(res.D, dtype=np.float64)).ravel()
+            ds_hat = np.atleast_1d(np.asarray(res.D_star, dtype=np.float64)).ravel()
+            f_hat = np.atleast_1d(np.asarray(res.f, dtype=np.float64)).ravel()
+            s0_hat = np.atleast_1d(
+                np.asarray(getattr(res, "S0", np.ones_like(d_hat)), dtype=np.float64)
+            ).ravel()
+            point = np.column_stack([d_hat, ds_hat, f_hat])
+            rail_ds = self.classify_railing(ds_hat, "Dstar")["railed_mask"]
+            railed_mat = _compute_railed_matrix(point, self.bounds, rail_tol=self.rail_tol)
+            railed_mat[:, 1] = np.atleast_1d(rail_ds).ravel()
+            return {
+                "point": point,
+                "s0": s0_hat,
+                "railed": railed_mat,
+                "dstar_railed": railed_mat[:, 1],
+                "fitter_backend": "sextant_core",
+            }
+
+        if m_clean == "segmented":
+            seg = SegmentedEstimator(
+                protocol=b_arr, b_thresh=eff_thresh, bounds=self.bounds
+            ).solve(sig)
+            point = np.asarray(seg.params, dtype=np.float64)
+            s0_hat = np.asarray(seg.s0, dtype=np.float64)
+            railed_mat = _compute_railed_matrix(point, self.bounds, rail_tol=self.rail_tol)
+        else:
+            nlls = NLLSEstimator(
+                protocol=b_arr,
+                bounds=self.bounds,
+                rail_tol=self.rail_tol,
+                max_nfev=self.max_nfev,
+            ).solve(sig)
+            point = np.asarray(nlls.params, dtype=np.float64)
+            s0_hat = np.asarray(nlls.s0, dtype=np.float64)
+            railed_mat = np.asarray(nlls.railed, dtype=bool)
+
+        return {
+            "point": point,
+            "s0": s0_hat,
+            "railed": railed_mat,
+            "dstar_railed": railed_mat[:, 1],
+            "fitter_backend": "ivimbench_builtin",
+        }
+
+    def fit_segmented(
+        self,
+        signals: np.ndarray,
+        bvalues: Sequence[float] | np.ndarray | str = "osipi",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.fit(signals, bvalues=bvalues, method="segmented", **kwargs)
+
+    def fit_nlls(
+        self,
+        signals: np.ndarray,
+        bvalues: Sequence[float] | np.ndarray | str = "osipi",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.fit(signals, bvalues=bvalues, method="nlls", **kwargs)
+
+    def fit_t2_ivim(
+        self,
+        signals: np.ndarray,
+        bvalues: Sequence[float] | np.ndarray,
+        te_values: Sequence[float] | np.ndarray,
+        *,
+        bounds_T2_p: tuple[float, float] = (20.0, 400.0),
+        bounds_T2_t: tuple[float, float] = (20.0, 250.0),
+        grid: bool | None = None,
+    ) -> dict[str, Any]:
+        """Fit relaxation-compensated 2D ``(b, TE)`` T2-IVIM via ``sextant_core`` or builtin NLLS."""
+        b_arr = np.asarray(bvalues, dtype=np.float64)
+        te_arr = np.asarray(te_values, dtype=np.float64)
+        sig = np.asarray(signals, dtype=np.float64)
+
+        sextant_mod = _load_sextant_module() if self.prefer_sextant else None
+        if sextant_mod is not None and hasattr(sextant_mod, "fit_t2_ivim"):
+            res = sextant_mod.fit_t2_ivim(
+                sig,
+                b_arr,
+                te_arr,
+                bounds_D=self.bounds["D"],
+                bounds_D_star=self.bounds["Dstar"],
+                bounds_f=self.bounds["f"],
+                bounds_T2_p=bounds_T2_p,
+                bounds_T2_t=bounds_T2_t,
+                grid=grid,
+                rail_tol=self.rail_tol,
+            )
+            return {
+                "D": np.asarray(res.D, dtype=np.float64),
+                "Dstar": np.asarray(res.D_star, dtype=np.float64),
+                "f": np.asarray(res.f, dtype=np.float64),
+                "T2_p": np.asarray(res.T2_p, dtype=np.float64),
+                "T2_t": np.asarray(res.T2_t, dtype=np.float64),
+                "S0": np.asarray(res.S0, dtype=np.float64),
+                "railed_mask": np.asarray(res.railed_mask, dtype=bool),
+                "fitter_backend": "sextant_core",
+            }
+
+        # Builtin bounded least-squares 2D (b, TE) fallback
+        is_grid = (
+            bool(grid)
+            if grid is not None
+            else (
+                b_arr.ndim == 1
+                and te_arr.ndim == 1
+                and sig.ndim >= 2
+                and sig.shape[-2:] == (b_arr.size, te_arr.size)
+            )
+        )
+        if is_grid:
+            bb, tt = np.meshgrid(b_arr, te_arr, indexing="ij")
+            b_flat, te_flat = bb.ravel(), tt.ravel()
+            spatial_shape = sig.shape[:-2]
+            flat_sig = sig.reshape(-1, b_flat.size)
+        else:
+            b_flat, te_flat = np.broadcast_arrays(b_arr.ravel(), te_arr.ravel())
+            b_flat = np.asarray(b_flat, dtype=np.float64)
+            te_flat = np.asarray(te_flat, dtype=np.float64)
+            spatial_shape = sig.shape[:-1]
+            flat_sig = np.atleast_2d(sig).reshape(-1, b_flat.size)
+
+        n_vox = flat_sig.shape[0]
+        lo = np.array(
+            [
+                self.bounds["D"][0],
+                self.bounds["Dstar"][0],
+                self.bounds["f"][0],
+                bounds_T2_p[0],
+                bounds_T2_t[0],
+                1e-6,
+            ],
+            dtype=np.float64,
+        )
+        hi = np.array(
+            [
+                self.bounds["D"][1],
+                self.bounds["Dstar"][1],
+                self.bounds["f"][1],
+                bounds_T2_p[1],
+                bounds_T2_t[1],
+                max(float(np.max(flat_sig)) * 5.0, 10.0),
+            ],
+            dtype=np.float64,
+        )
+        out_params = np.empty((n_vox, 6), dtype=np.float64)
+        for i in range(n_vox):
+            y_obs = flat_sig[i]
+            s0_init = float(np.clip(np.max(y_obs) * 1.4, lo[5], hi[5]))
+            x0 = np.clip(
+                np.array([1.2e-3, 20.0e-3, 0.15, 160.0, 55.0, s0_init], dtype=np.float64),
+                lo + 1e-8,
+                hi - 1e-8,
+            )
+
+            def _res_fn(theta: np.ndarray, _y: np.ndarray = y_obs) -> np.ndarray:
+                d_v, ds_v, f_v, t2p_v, t2t_v, s0_v = theta
+                pred = s0_v * (
+                    f_v * np.exp(-b_flat * ds_v - te_flat / t2p_v)
+                    + (1.0 - f_v) * np.exp(-b_flat * d_v - te_flat / t2t_v)
+                )
+                return pred - _y
+
+            sol = least_squares(_res_fn, x0, bounds=(lo, hi), max_nfev=150)
+            out_params[i] = sol.x
+
+        def _reshape_param(col: np.ndarray) -> np.ndarray | float:
+            return float(col[0]) if spatial_shape == () else col.reshape(spatial_shape)
+
+        ds_est = _reshape_param(out_params[:, 1])
+        rail_mask = self.classify_railing(np.atleast_1d(ds_est), "Dstar")["railed_mask"]
+        rail_out = bool(rail_mask.ravel()[0]) if spatial_shape == () else rail_mask.reshape(spatial_shape)
+        return {
+            "D": _reshape_param(out_params[:, 0]),
+            "Dstar": ds_est,
+            "f": _reshape_param(out_params[:, 2]),
+            "T2_p": _reshape_param(out_params[:, 3]),
+            "T2_t": _reshape_param(out_params[:, 4]),
+            "S0": _reshape_param(out_params[:, 5]),
+            "railed_mask": rail_out,
+            "fitter_backend": "ivimbench_builtin",
+        }
+
+    def compute_crlb(
+        self,
+        bvalues: Sequence[float] | np.ndarray | str = "osipi",
+        params: np.ndarray | Sequence[float] | None = None,
+        *,
+        D: float | None = None,
+        Dstar: float | None = None,
+        f: float | None = None,
+        snr: float | None = None,
+        S0: float = 1.0,
+        reg: float = 1e-12,
+    ) -> dict[str, Any]:
+        """Compute Fisher Information Matrix & CRLB covariance via ``sextant_core`` or builtin."""
+        b_arr, _ = resolve_bvalues(bvalues)
+        eff_snr = self.snr if snr is None else float(snr)
+        if params is None:
+            if D is None or Dstar is None or f is None:
+                raise ValueError("Provide either `params` or explicit `D`, `Dstar`, `f`.")
+            p_arr = np.array([[float(D), float(Dstar), float(f)]], dtype=np.float64)
+            single = True
+        else:
+            raw_p = np.asarray(params, dtype=np.float64)
+            single = raw_p.ndim == 1
+            p_arr = np.atleast_2d(raw_p)
+
+        sextant_mod = _load_sextant_module() if self.prefer_sextant else None
+        if sextant_mod is not None and hasattr(sextant_mod, "compute_crlb"):
+            stds, covs, fims, cvs = [], [], [], []
+            for row in p_arr:
+                res = sextant_mod.compute_crlb(
+                    b_arr,
+                    D=float(row[0]),
+                    D_star=float(row[1]),
+                    f=float(row[2]),
+                    snr=eff_snr,
+                    S0=float(S0),
+                    reg=float(reg),
+                )
+                stds.append(np.asarray(res["std"], dtype=np.float64))
+                covs.append(np.asarray(res["cov"], dtype=np.float64))
+                fims.append(np.asarray(res["fim"], dtype=np.float64))
+                cvs.append(float(res["cv_D_star"]))
+            if single:
+                return {
+                    "std": stds[0],
+                    "cov": covs[0],
+                    "fim": fims[0],
+                    "cv_Dstar": cvs[0],
+                    "fitter_backend": "sextant_core",
+                }
+            return {
+                "std": np.stack(stds, axis=0),
+                "cov": np.stack(covs, axis=0),
+                "fim": np.stack(fims, axis=0),
+                "cv_Dstar": np.asarray(cvs, dtype=np.float64),
+                "fitter_backend": "sextant_core",
+            }
+
+        sigma = float(S0) / max(eff_snr, 1e-12)
+        jac = ivim_jacobian(b_arr, p_arr, s0=float(S0))
+        fim_batch = np.einsum("nbi,nbj->nij", jac, jac) / (sigma**2)
+        eye3 = np.eye(3, dtype=np.float64)[None, :, :]
+        cov_batch = np.linalg.inv(fim_batch + float(reg) * eye3)
+        std_batch = np.sqrt(np.maximum(np.diagonal(cov_batch, axis1=-2, axis2=-1), 0.0))
+        cv_batch = std_batch[:, 1] / np.maximum(p_arr[:, 1], 1e-12)
+        if single:
+            return {
+                "std": std_batch[0],
+                "cov": cov_batch[0],
+                "fim": fim_batch[0],
+                "cv_Dstar": float(cv_batch[0]),
+                "fitter_backend": "ivimbench_builtin",
+            }
+        return {
+            "std": std_batch,
+            "cov": cov_batch,
+            "fim": fim_batch,
+            "cv_Dstar": cv_batch,
+            "fitter_backend": "ivimbench_builtin",
+        }
+
+
+def get_canonical_fitter(prefer_sextant: bool = True, **kwargs: Any) -> CanonicalFitter:
+    """Return a license-safe canonical forward fitter delegating to ``sextant_core`` when available."""
+    return CanonicalFitter(prefer_sextant=prefer_sextant, **kwargs)
+
+
+def evaluate_deployment_shift(
+    cal_signals: np.ndarray,
+    test_signals: np.ndarray,
+    bvalues: Sequence[float] | np.ndarray | str = "osipi",
+    *,
+    fpr: float = 0.05,
+    n_null: int = 200,
+    use_external: bool = True,
+    seed: int = DEFAULT_SEED,
+) -> dict[str, Any]:
+    """Delegate label-free deployment shift detection to ``conformal_ivim.DeploymentValidityMonitor``."""
+    b_arr, _ = resolve_bvalues(bvalues)
+    x_cal = np.atleast_2d(np.asarray(cal_signals, dtype=np.float64))
+    x_test = np.atleast_2d(np.asarray(test_signals, dtype=np.float64))
+
+    if use_external and has_conformal_ivim():
+        conf_pkg = importlib.import_module("conformal_ivim")
+        monitor = conf_pkg.DeploymentValidityMonitor(
+            fpr=float(fpr),
+            n_null=int(n_null),
+            seed=int(seed),
+        )
+        monitor.fit_signals(x_cal, b=b_arr)
+        verdict = monitor.evaluate_signals(x_test, b=b_arr)
+        maha_info = verdict.get("maha", {})
+        resid_info = verdict.get("resid", {})
+        return {
+            "fires": bool(verdict.get("fires", False)),
+            "is_stale": bool(verdict.get("fires", False)),
+            "auc": float(verdict.get("auc", 0.5)),
+            "mahalanobis_stat": float(maha_info.get("stat", 0.0)),
+            "p_value": float(maha_info.get("p_value", 1.0)),
+            "residual_rms_ratio": float(resid_info.get("ratio", 1.0)),
+            "backend": "conformal_ivim",
+        }
+
+    from ..decision.voi import check_domain_shift
+
+    rep = check_domain_shift(
+        x_cal,
+        x_test,
+        bvalues=b_arr,
+        alpha=float(fpr),
+        n_perm=int(n_null),
+        seed=int(seed),
+    )
+    return {
+        "fires": bool(rep.is_stale),
+        "is_stale": bool(rep.is_stale),
+        "auc": float(np.clip(0.5 + 0.12 * np.sqrt(max(rep.signal_mahalanobis_sq, 0.0)), 0.5, 0.99)),
+        "mahalanobis_stat": float(rep.signal_mahalanobis_sq),
+        "p_value": float(min(rep.signal_pvalue, rep.residual_pvalue)),
+        "residual_rms_ratio": float(rep.residual_rms_ratio),
+        "backend": "ivimbench_builtin",
+    }
+
+
+def detect_voxel_ood(
+    cal_signals: np.ndarray,
+    test_signals: np.ndarray,
+    bvalues: Sequence[float] | np.ndarray | str = "osipi",
+    *,
+    lower: np.ndarray | None = None,
+    upper: np.ndarray | None = None,
+    alpha_ood: float = 0.05,
+    nominal_alpha: float = 0.10,
+    use_external: bool = True,
+    seed: int = DEFAULT_SEED,
+) -> dict[str, Any]:
+    """Delegate per-voxel conformal OOD screening to ``conformal_ivim.VoxelOODDetector``."""
+    b_arr, _ = resolve_bvalues(bvalues)
+    x_cal = np.atleast_2d(np.asarray(cal_signals, dtype=np.float64))
+    x_test = np.atleast_2d(np.asarray(test_signals, dtype=np.float64))
+
+    if use_external and has_conformal_ivim():
+        conf_pkg = importlib.import_module("conformal_ivim")
+        detector = conf_pkg.VoxelOODDetector(
+            alpha_ood=float(alpha_ood),
+            b=b_arr,
+            seed=int(seed),
+        )
+        detector.fit(x_cal, b=b_arr)
+        pred = detector.predict_ood(x_test, b=b_arr)
+        ood_mask = np.asarray(pred["ood_mask"], dtype=bool)
+        out: dict[str, Any] = {
+            "ood_mask": ood_mask,
+            "p_values": np.asarray(pred["p_values"], dtype=np.float64),
+            "ood_scores": np.asarray(pred["ood_scores"], dtype=np.float64),
+            "flagged_fraction": float(pred["flagged_fraction"]),
+            "backend": "conformal_ivim",
+        }
+        if lower is not None and upper is not None:
+            adj = detector.adjust_intervals(
+                np.asarray(lower, dtype=np.float64),
+                np.asarray(upper, dtype=np.float64),
+                ood_mask,
+                nominal_alpha=float(nominal_alpha),
+            )
+            out["adjusted_lower"] = np.asarray(adj["lower"], dtype=np.float64)
+            out["adjusted_upper"] = np.asarray(adj["upper"], dtype=np.float64)
+        return out
+
+    # Standalone NumPy conformal Mahalanobis + physical monotonicity OOD fallback
+    s0_cal = np.maximum(x_cal[:, 0:1], 1e-6)
+    s0_test = np.maximum(x_test[:, 0:1], 1e-6)
+    zn_cal = x_cal / s0_cal
+    zn_test = x_test / s0_test
+    mu = np.mean(zn_cal, axis=0)
+    cov = np.atleast_2d(np.cov(zn_cal, rowvar=False)) + 1e-4 * np.eye(zn_cal.shape[1])
+    inv_cov = np.linalg.inv(cov)
+
+    def _score_batch(arr: np.ndarray, raw: np.ndarray) -> np.ndarray:
+        diff = arr - mu[None, :]
+        maha = np.sqrt(np.maximum(np.einsum("ni,ij,nj->n", diff, inv_cov, diff), 0.0))
+        order = np.argsort(b_arr)
+        s_ord = arr[:, order]
+        rebound = np.sum(np.maximum(0.0, s_ord[:, 1:] - s_ord[:, :-1] - 0.08), axis=1) * 8.0
+        neg_pen = np.maximum(0.0, -np.min(raw, axis=1)) * 10.0
+        return maha + rebound + neg_pen
+
+    cal_scores = np.sort(_score_batch(zn_cal, x_cal))
+    test_scores = _score_batch(zn_test, x_test)
+    n_cal = cal_scores.size
+    idx = np.searchsorted(cal_scores, test_scores, side="left")
+    p_vals = (1.0 + (n_cal - idx).astype(np.float64)) / float(n_cal + 1)
+    ood_mask = p_vals <= float(alpha_ood)
+    out = {
+        "ood_mask": ood_mask,
+        "p_values": p_vals,
+        "ood_scores": test_scores,
+        "flagged_fraction": float(np.mean(ood_mask)) if ood_mask.size else 0.0,
+        "backend": "ivimbench_builtin",
+    }
+    if lower is not None and upper is not None:
+        lo_adj = np.asarray(lower, dtype=np.float64).copy()
+        hi_adj = np.asarray(upper, dtype=np.float64).copy()
+        if np.any(ood_mask):
+            if lo_adj.ndim == 1:
+                b_lo, b_hi = DEFAULT_PARAM_BOUNDS["f"]
+                lo_adj[ood_mask] = np.minimum(lo_adj[ood_mask], b_lo)
+                hi_adj[ood_mask] = np.maximum(hi_adj[ood_mask], b_hi)
+            else:
+                for j, pname in enumerate(PARAM_NAMES[: lo_adj.shape[1]]):
+                    b_lo, b_hi = DEFAULT_PARAM_BOUNDS[pname]
+                    lo_adj[ood_mask, j] = np.minimum(lo_adj[ood_mask, j], b_lo)
+                    hi_adj[ood_mask, j] = np.maximum(hi_adj[ood_mask, j], b_hi)
+        out["adjusted_lower"] = lo_adj
+        out["adjusted_upper"] = hi_adj
+    return out
 
 
 @register_estimator(
@@ -402,26 +941,37 @@ class ConformalIVIMEstimator:
 
         if self.use_external and has_conformal_ivim():
             conf_pkg = importlib.import_module("conformal_ivim")
-            base_method = "cqr" if self.method == "mondrian" else self.method
-            model = conf_pkg.ConformalIVIM(
-                alpha=eff_alpha,
-                method=base_method,
-                b=b_arr,
-                clip_bounds=tuple(
-                    (float(self.bounds[n][0]), float(self.bounds[n][1]))
-                    for n in PARAM_NAMES
-                ),
-                random_state=self.seed,
+            clip_b = tuple(
+                (float(self.bounds[n][0]), float(self.bounds[n][1]))
+                for n in PARAM_NAMES
             )
-            model.fit(x_tr, y_tr)
-            if self.method == "mondrian":
-                cal_nlls = NLLSEstimator(
-                    protocol=b_arr, bounds=self.bounds, rail_tol=self.rail_tol, max_nfev=80
-                ).solve(x_cal)
-                strata_cal = self._railing_strata_labels(cal_nlls.params)
-                model.calibrate(x_cal, y_cal, strata=strata_cal)
+            if self.method in ("aci", "conformal_pid"):
+                model = conf_pkg.AdaptiveConformalIVIM(
+                    alpha=eff_alpha,
+                    method=self.method,
+                    b=b_arr,
+                    clip_bounds=clip_b,
+                    random_state=self.seed,
+                )
+                model.fit_calibrate(x_tr, y_tr, x_cal, y_cal, fit_monitor=False)
             else:
-                model.calibrate(x_cal, y_cal)
+                base_method = "cqr" if self.method == "mondrian" else self.method
+                model = conf_pkg.ConformalIVIM(
+                    alpha=eff_alpha,
+                    method=base_method,
+                    b=b_arr,
+                    clip_bounds=clip_b,
+                    random_state=self.seed,
+                )
+                model.fit(x_tr, y_tr)
+                if self.method == "mondrian":
+                    cal_nlls = NLLSEstimator(
+                        protocol=b_arr, bounds=self.bounds, rail_tol=self.rail_tol, max_nfev=80
+                    ).solve(x_cal)
+                    strata_cal = self._railing_strata_labels(cal_nlls.params)
+                    model.calibrate(x_cal, y_cal, strata=strata_cal)
+                else:
+                    model.calibrate(x_cal, y_cal)
 
             monitor = conf_pkg.DeploymentValidityMonitor(
                 fpr=self.monitor_fpr,
@@ -434,7 +984,7 @@ class ConformalIVIMEstimator:
             self._calibrated_key = (tuple(np.round(b_arr, 6).tolist()), eff_alpha, self.method, "ext")
             return self
 
-        # Pure-NumPy MIT fallback across split, cqr, and railed/interior mondrian
+        # Pure-NumPy MIT fallback across split, cqr, mondrian, aci, and conformal_pid
         self._external_model = None
         self._external_monitor = None
         mlp_seed = int(np.random.Generator(np.random.PCG64(mlp_ss)).integers(0, 2**31 - 1))
@@ -451,16 +1001,15 @@ class ConformalIVIMEstimator:
         pt_cal = mlp.predict(x_cal)
         q_lo_cal, q_hi_cal = mlp.predict_intervals(x_cal, alpha=eff_alpha)
 
-        if self.method == "split":
-            abs_res = np.abs(y_cal - pt_cal)
-            self._split_offsets = np.array(
-                [conformal_offset(abs_res[:, j], eff_alpha) for j in range(3)],
-                dtype=np.float64,
+        if self.method in ("split", "aci", "conformal_pid"):
+            split_cal = SplitConformalResidual(alpha=eff_alpha, use_external=False).calibrate(
+                pt_cal, y_cal
             )
+            self._split_offsets = split_cal.offsets_
         elif self.method == "cqr":
             cqr_scores = np.maximum(q_lo_cal - y_cal, y_cal - q_hi_cal)
             self._cqr_offsets = np.array(
-                [conformal_offset(cqr_scores[:, j], eff_alpha) for j in range(3)],
+                [conformal_offset(cqr_scores[:, j], eff_alpha, use_external=False) for j in range(3)],
                 dtype=np.float64,
             )
         elif self.method == "mondrian":
@@ -470,7 +1019,7 @@ class ConformalIVIMEstimator:
             cal_railed_ds = np.asarray(cal_nlls.railed[:, 1], dtype=bool)
             cqr_scores = np.maximum(q_lo_cal - y_cal, y_cal - q_hi_cal)
             global_off = np.array(
-                [conformal_offset(cqr_scores[:, j], eff_alpha) for j in range(3)],
+                [conformal_offset(cqr_scores[:, j], eff_alpha, use_external=False) for j in range(3)],
                 dtype=np.float64,
             )
             mond_off: dict[bool, np.ndarray] = {}
@@ -478,7 +1027,10 @@ class ConformalIVIMEstimator:
                 sel = cal_railed_ds == is_rail
                 if int(np.sum(sel)) >= 8:
                     mond_off[is_rail] = np.array(
-                        [conformal_offset(cqr_scores[sel, j], eff_alpha) for j in range(3)],
+                        [
+                            conformal_offset(cqr_scores[sel, j], eff_alpha, use_external=False)
+                            for j in range(3)
+                        ],
                         dtype=np.float64,
                     )
                 else:
@@ -571,6 +1123,31 @@ class ConformalIVIMEstimator:
             "backend": "ivimbench.decision.voi.check_domain_shift",
         }
 
+    def detect_ood(
+        self,
+        test_signals: np.ndarray,
+        bvalues: Sequence[float] | np.ndarray | str = "osipi",
+        *,
+        lower: np.ndarray | None = None,
+        upper: np.ndarray | None = None,
+        alpha_ood: float = 0.05,
+    ) -> dict[str, Any]:
+        """Run per-voxel conformal OOD screening against the fitted calibration signals."""
+        b_arr, _ = resolve_bvalues(bvalues)
+        self._ensure_calibrated(b_arr, self.alpha)
+        assert self._cal_signals is not None
+        return detect_voxel_ood(
+            self._cal_signals,
+            test_signals,
+            bvalues=b_arr,
+            lower=lower,
+            upper=upper,
+            alpha_ood=alpha_ood,
+            nominal_alpha=self.alpha,
+            use_external=self.use_external,
+            seed=self.seed,
+        )
+
     def fit_predict(
         self,
         signals: np.ndarray,
@@ -596,6 +1173,8 @@ class ConformalIVIMEstimator:
                 lo_ext, hi_ext = self._external_model.predict_interval(
                     sig, alpha=eff_alpha, strata=strata_test
                 )
+            elif self.method in ("aci", "conformal_pid"):
+                lo_ext, hi_ext = self._external_model.predict_interval(sig)
             else:
                 lo_ext, hi_ext = self._external_model.predict_interval(sig, alpha=eff_alpha)
             pt_ext = self._external_model.predict(sig)
@@ -619,11 +1198,23 @@ class ConformalIVIMEstimator:
         pt = self._mlp.predict(sig)
         q_lo, q_hi = self._mlp.predict_intervals(sig, alpha=eff_alpha)
 
-        if self.method == "split":
+        if self.method in ("split", "aci", "conformal_pid"):
             assert self._split_offsets is not None
             railed_mat = _compute_railed_matrix(pt, self.bounds, rail_tol=self.rail_tol)
-            lo_raw = pt - self._split_offsets[None, :]
-            hi_raw = pt + self._split_offsets[None, :]
+            if self.method in ("aci", "conformal_pid") and "stream_true" in _extra:
+                seq_cal = SequentialConformalCalibrator(
+                    method=self.method,  # type: ignore[arg-type]
+                    alpha=eff_alpha,
+                    use_external=False,
+                )
+                assert self._cal_signals is not None
+                pt_cal = self._mlp.predict(self._cal_signals)
+                lo_raw, hi_raw, _ = seq_cal.calibrate_stream(
+                    pt_cal, np.asarray(_extra.get("cal_true", pt_cal)), pt, np.asarray(_extra["stream_true"])
+                )
+            else:
+                lo_raw = pt - self._split_offsets[None, :]
+                hi_raw = pt + self._split_offsets[None, :]
         elif self.method == "cqr":
             assert self._cqr_offsets is not None
             railed_mat = _compute_railed_matrix(pt, self.bounds, rail_tol=self.rail_tol)
