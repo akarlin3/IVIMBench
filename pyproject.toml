@@ -96,6 +96,7 @@ dev = [
 
 [project.scripts]
 ivimbench = "ivimbench.cli:main"
+averycorp-suite = "ivimbench.cli:suite_main"
 
 [project.urls]
 Homepage = "https://github.com/akarlin3/IVIMBench"

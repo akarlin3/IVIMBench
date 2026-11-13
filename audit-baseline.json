@@ -219,21 +219,36 @@
     "limbo-audit": {
       "name": "limbo-audit",
       "package": "limbo-audit",
-      "version": "not-installed",
+      "version": "1.0.0",
       "suite": "Suite II: Scientific Identifiability & Null-Audit Suite",
       "suite_id": "2",
       "stage": "Suite II: Zero-Phantom Citation & Manuscript Traceability Gate",
-      "stage_role": "Suite II: Zero-Phantom Citation & Manuscript Traceability Gate",
+      "stage_role": "Suite II: Zero-Phantom Citation, Numerical Traceability & Epistemic Null-Audit Gate",
       "module": "limbo_audit.audit",
       "cli": "limbo-audit",
       "repo": "akarlin3/limboAudit",
       "license": "MIT",
-      "status": "SKIPPED",
-      "verdict": "limbo-audit (limbo_audit.audit) not installed; install `ivimbench[suite]` or `git+https://github.com/akarlin3/limboAudit.git`.",
-      "metrics": {},
-      "thresholds": {},
+      "status": "PASS",
+      "verdict": "ZERO_PHANTOM_CITATIONS_AND_NUMBERS_TRACED",
+      "metrics": {
+        "verified_references": 59,
+        "phantom_citations": 0,
+        "identifier_coverage": 1.0,
+        "traced_numbers_ratio": 1.0,
+        "adversarial_fault_recall": 1.0,
+        "self_citation_fraction": 0.051
+      },
+      "thresholds": {
+        "max_phantom_citations": 0,
+        "min_identifier_coverage": 1.0,
+        "min_traced_numbers_ratio": 1.0,
+        "min_adversarial_fault_recall": 1.0,
+        "max_self_citation_fraction": 0.15,
+        "consistency_rtol": 0.0001,
+        "consistency_atol": 0.0001
+      },
       "seed": 42,
-      "report_sha256": null
+      "report_sha256": "7ed70fbc9cc7c2a77b81faf8db357c3aca8980223295a9fbdf15971a72a8be98"
     }
   }
 }

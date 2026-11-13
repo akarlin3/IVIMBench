@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from ivimbench.audit import SUITE_I_NAME, SUITE_II_NAME, AuditReport
-from ivimbench.cli import main
+from ivimbench.cli import main, suite_main
 from ivimbench.suite_runner import (
     AVERYCORP_SUITE_REGISTRY,
     build_audit_baseline,
@@ -200,6 +200,11 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert list(baseline_data["packages"].keys()) == expected_names
     assert baseline_data["packages"]["limbo-audit"]["repo"] == "akarlin3/limboAudit"
     assert baseline_data["packages"]["limbo-audit"]["module"] == "limbo_audit.audit"
+    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.0.0"
+    assert baseline_data["packages"]["limbo-audit"]["status"] == "PASS"
+    assert baseline_data["packages"]["limbo-audit"]["metrics"]["verified_references"] == 59
+    assert baseline_data["packages"]["limbo-audit"]["metrics"]["phantom_citations"] == 0
+    assert len(baseline_data["packages"]["limbo-audit"]["report_sha256"]) == 64
 
     assert lock_data["seed"] == 42
     assert lock_data["catalog_size"] == 7
@@ -207,6 +212,10 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert lock_data["suite_ii_count"] == 4
     assert list(lock_data["packages"].keys()) == expected_names
     assert lock_data["packages"]["limbo-audit"]["cli"] == "limbo-audit"
+    assert lock_data["packages"]["limbo-audit"]["version"] == "1.0.0"
+    assert lock_data["packages"]["limbo-audit"]["status"] == "PASS"
+    assert len(lock_data["packages"]["limbo-audit"]["report_sha256"]) == 64
+    assert isinstance(lock_data["packages"]["limbo-audit"]["git_commit"], str)
 
     rep_ivim = run_suite_audit(seed=42, suite_filter="1", packages=["ivimbench"])
     base_check = verify_against_baseline(rep_ivim, baseline_data)
@@ -261,6 +270,11 @@ def test_cli_suite_audit_subcommand(
     assert out_json["catalog_size"] == 7
     assert len(out_json["packages"]) == 4
     assert out_json["packages"][-1]["name"] == "limbo-audit"
+
+    rc_runner = suite_main(["--suite", "2", "--seed", "42", "--json"])
+    assert rc_runner == 0
+    out_runner = json.loads(capsys.readouterr().out)
+    assert out_runner["packages"][-1]["name"] == "limbo-audit"
 
     md_path = tmp_path / "suite2.md"
     rc_md = main(

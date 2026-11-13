@@ -1069,5 +1069,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     return int(args.func(args))
 
 
+def suite_main(argv: Sequence[str] | None = None) -> int:
+    """Standalone ``averycorp-suite`` entrypoint dispatching to ``suite-audit``."""
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    if raw and raw[0] == "suite-audit":
+        return main(raw)
+    return main(["suite-audit", *raw])
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

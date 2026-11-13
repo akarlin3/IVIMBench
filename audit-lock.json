@@ -6,7 +6,7 @@
   "catalog_size": 7,
   "suite_i_count": 3,
   "suite_ii_count": 4,
-  "catalog_sha256": "262527fbdb9a0ae448da18710e925f22dca72d118e0ac4374a1f6f0a2bc18f04",
+  "catalog_sha256": "c2d65557ec42ecbd00580bb6b30160adfe29ae1e6e6bff1ce511719cc11d9bdf",
   "packages": {
     "sextant-ivim": {
       "name": "sextant-ivim",
@@ -107,11 +107,11 @@
       "repo": "akarlin3/limboAudit",
       "license": "MIT",
       "stage": "Suite II: Zero-Phantom Citation & Manuscript Traceability Gate",
-      "version": "not-installed",
-      "git_commit": null,
-      "status": "SKIPPED",
+      "version": "1.0.0",
+      "git_commit": "a08b22bdefb47a32287bba4fa6e5c35b2aa76cc0",
+      "status": "PASS",
       "seed": 42,
-      "report_sha256": null
+      "report_sha256": "7ed70fbc9cc7c2a77b81faf8db357c3aca8980223295a9fbdf15971a72a8be98"
     }
   }
 }
