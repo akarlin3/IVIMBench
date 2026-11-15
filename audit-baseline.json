@@ -221,10 +221,10 @@
     "limbo-audit": {
       "name": "limbo-audit",
       "package": "limbo-audit",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "suite": "Suite II: Scientific Identifiability & Null-Audit Suite",
       "suite_id": "2",
-      "stage": "Suite II: Zero-Phantom Citation, Semantic Claim & Auto-Remediation Gate",
+      "stage": "Suite II: Epistemic, Statistical, Figure Provenance & Rebuttal Null-Audit Gate",
       "stage_role": "Suite II: Zero-Phantom Citation, Numerical Traceability & Epistemic Null-Audit Gate",
       "module": "limbo_audit.audit",
       "cli": "limbo-audit",
@@ -240,7 +240,10 @@
         "adversarial_fault_recall": 1.0,
         "self_citation_fraction": 0.051,
         "semantic_drift_recall": 1.0,
-        "autofix_roundtrip_pass": 1.0
+        "autofix_roundtrip_pass": 1.0,
+        "statcheck_trap_recall": 1.0,
+        "figure_provenance_pass": 1.0,
+        "rebuttal_quote_recall": 1.0
       },
       "thresholds": {
         "max_phantom_citations": 0,
@@ -250,11 +253,14 @@
         "max_self_citation_fraction": 0.15,
         "min_semantic_drift_recall": 1.0,
         "min_autofix_roundtrip_pass": 1.0,
+        "min_statcheck_trap_recall": 1.0,
+        "min_figure_provenance_pass": 1.0,
+        "min_rebuttal_quote_recall": 1.0,
         "consistency_rtol": 0.0001,
         "consistency_atol": 0.0001
       },
       "seed": 42,
-      "report_sha256": "543cbf57dea4e1c21737a616b9e3c2be6eb13fe2b9841d2d0a4555db46f4fcfe"
+      "report_sha256": "abc98949ba31c77f3f29ee901e3af3be778059b30106370431db4fd5260f7214"
     }
   }
 }
