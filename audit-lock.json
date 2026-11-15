@@ -6,8 +6,8 @@
   "catalog_size": 7,
   "suite_i_count": 3,
   "suite_ii_count": 4,
-  "catalog_sha256": "8fa55e91a243fff7723750fc4fdb8b8e9583f1dd7da6bd76ac66e5f75742dd9c",
-  "chain_sha256": "bad2bf13be74feb49ce5c65073e0a7e6d480e66824bbd6486cf99ae263d4cdce",
+  "catalog_sha256": "f5c5330b99b81ba93a5bc0ba1a2e057832a43edfdf4c7c8ea9cff8ff4580fe09",
+  "chain_sha256": "ba15ae4a3fa76836d3f24c5c1c6f5c04ba46540ed0330cca6ebf364b27cc7b4a",
   "packages": {
     "sextant-ivim": {
       "name": "sextant-ivim",
@@ -52,7 +52,7 @@
       "git_commit": null,
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "f9b524bec60fcdc97bb468f2a0b8ba92552e3ab2a17cc8a69ae7b3f246e4d32c",
+      "report_sha256": "7d449033e298e6533c1548ec0187d094afcc00a9efb1ecc426ca1d6d2aac5ee6",
       "standalone_report_sha256": "7d449033e298e6533c1548ec0187d094afcc00a9efb1ecc426ca1d6d2aac5ee6"
     },
     "weak-sindy": {
@@ -108,12 +108,12 @@
       "cli": "limbo-audit",
       "repo": "akarlin3/limboAudit",
       "license": "MIT",
-      "stage": "Suite II: Zero-Phantom Citation & Manuscript Traceability Gate",
-      "version": "1.0.0",
-      "git_commit": "a08b22bdefb47a32287bba4fa6e5c35b2aa76cc0",
+      "stage": "Suite II: Zero-Phantom Citation, Semantic Claim & Auto-Remediation Gate",
+      "version": "1.1.0",
+      "git_commit": "cfdb390485a8d987152de26b1607dbc3b8f865c3",
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "7ed70fbc9cc7c2a77b81faf8db357c3aca8980223295a9fbdf15971a72a8be98"
+      "report_sha256": "543cbf57dea4e1c21737a616b9e3c2be6eb13fe2b9841d2d0a4555db46f4fcfe"
     }
   }
 }

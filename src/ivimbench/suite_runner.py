@@ -174,7 +174,7 @@ AVERYCORP_SUITE_REGISTRY: tuple[SuitePackageSpec, ...] = (
         cli="limbo-audit",
         repo="akarlin3/limboAudit",
         license="MIT",
-        stage="Suite II: Zero-Phantom Citation & Manuscript Traceability Gate",
+        stage="Suite II: Zero-Phantom Citation, Semantic Claim & Auto-Remediation Gate",
     ),
 )
 
@@ -517,6 +517,22 @@ def _truncate(text: str, max_len: int) -> str:
     return clean[: max(max_len - 3, 1)] + "..."
 
 
+def _format_entry_metrics(entry: Mapping[str, Any], *, sep: str = ", ") -> str:
+    metrics = entry.get("metrics")
+    if not isinstance(metrics, Mapping) or not metrics:
+        return "-"
+    preferred = (
+        "verified_references",
+        "traced_numbers_ratio",
+        "semantic_drift_recall",
+        "autofix_roundtrip_pass",
+    )
+    keys = [k for k in preferred if k in metrics]
+    if not keys:
+        keys = list(metrics.keys())[:4]
+    return sep.join(f"{k}: {metrics[k]}" for k in keys)
+
+
 def format_suite_table(
     report: SuiteAuditReport | Mapping[str, Any] | None = None,
     *,
@@ -552,6 +568,12 @@ def format_suite_table(
             f"{s_lbl:<10} {name:<16} {ver:<14} {lic:<18} {status:<9} {stage}"
         )
 
+    lines.append(thin)
+    for entry in pkgs:
+        m_str = _format_entry_metrics(entry)
+        if m_str != "-":
+            name = str(entry.get("name", entry.get("package", "")))
+            lines.append(f"  [{name}] {m_str}")
     lines.append(thin)
     lines.append(
         f"Packages: {summary.get('total_packages', len(pkgs))} "
@@ -592,8 +614,8 @@ def format_suite_markdown(
             f"**Installed**: `{summary.get('installed_packages', 0)}/{summary.get('total_packages', len(pkgs))}`"
         ),
         "",
-        "| Suite | Package | CLI | Version | License | Stage Role | Status | Verdict |",
-        "| :--- | :--- | :--- | :--- | :--- | :--- | :---: | :--- |",
+        "| Suite | Package | CLI | Version | License | Stage Role | Status | Key Metrics | Verdict |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :---: | :--- | :--- |",
     ]
 
     for entry in pkgs:
@@ -606,9 +628,10 @@ def format_suite_markdown(
         lic = _escape_md(entry.get("license", ""))
         stage = _escape_md(entry.get("stage", entry.get("stage_role", "")))
         status = f"**{_escape_md(entry.get('status', 'UNKNOWN'))}**"
+        metrics_cell = _escape_md(_format_entry_metrics(entry))
         verdict = _escape_md(_truncate(str(entry.get("verdict", "")), 96))
         lines.append(
-            f"| {s_lbl} | {pkg_cell} | {cli} | {ver} | {lic} | {stage} | {status} | {verdict} |"
+            f"| {s_lbl} | {pkg_cell} | {cli} | {ver} | {lic} | {stage} | {status} | {metrics_cell} | {verdict} |"
         )
 
     return "\n".join(lines)
@@ -657,9 +680,11 @@ def format_suite_latex(
         r"\midrule",
     ]
 
+    metric_notes: list[str] = []
     for entry in pkgs:
         s_lbl = _escape_latex(_short_suite_label(entry))
-        name = _escape_latex(entry.get("name", entry.get("package", "")))
+        name_raw = str(entry.get("name", entry.get("package", "")))
+        name = _escape_latex(name_raw)
         ver = _escape_latex(entry.get("version", "unknown"))
         lic = _escape_latex(entry.get("license", ""))
         status = _escape_latex(entry.get("status", "UNKNOWN"))
@@ -667,14 +692,20 @@ def format_suite_latex(
         lines.append(
             rf"{s_lbl} & \texttt{{{name}}} & \texttt{{{ver}}} & {lic} & \textbf{{{status}}} & {stage} \\"
         )
+        m_str = _format_entry_metrics(entry)
+        if m_str != "-":
+            metric_notes.append(rf"\texttt{{{name}}}: {_escape_latex(m_str)}")
 
     lines.extend(
         [
             r"\bottomrule",
             r"\end{tabular}",
-            r"\end{table}",
         ]
     )
+    if metric_notes:
+        lines.append(r"\vspace{0.4em}")
+        lines.append(r"\footnotesize\noindent\textbf{Key Metrics:} " + "; ".join(metric_notes) + ".")
+    lines.append(r"\end{table}")
     return "\n".join(lines)
 
 
@@ -720,6 +751,7 @@ def format_suite_html(
         stage_esc = html.escape(str(entry.get("stage", entry.get("stage_role", ""))))
         status_str = str(entry.get("status", "UNKNOWN"))
         badge_cls = _status_badge_class(status_str)
+        metrics_esc = html.escape(_format_entry_metrics(entry))
         verdict_esc = html.escape(str(entry.get("verdict", "")))
         row_fragments.append(
             "<tr>"
@@ -730,6 +762,7 @@ def format_suite_html(
             f"<td>{lic_esc}</td>"
             f"<td>{stage_esc}</td>"
             f'<td><span class="badge {badge_cls}">{html.escape(status_str)}</span></td>'
+            f"<td><code>{metrics_esc}</code></td>"
             f"<td>{verdict_esc}</td>"
             "</tr>"
         )
@@ -851,6 +884,7 @@ def format_suite_html(
           <th>License</th>
           <th>Stage Role</th>
           <th>Status</th>
+          <th>Key Metrics</th>
           <th>Verdict</th>
         </tr>
       </thead>
