@@ -59,7 +59,7 @@ def test_suite_registry_7_packages_and_limbo_audit_spec() -> None:
     assert limbo.license == "MIT"
     assert (
         limbo.stage
-        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Executive Deliverable Gate"
+        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Interactive Executive Studio"
     )
     assert limbo["name"] == "limbo-audit"
     assert limbo["module"] == "limbo_audit.audit"
@@ -176,6 +176,8 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     names = [p["name"] for p in rep_all_subset.packages]
     assert names == ["ivimbench", "limbo-audit"]
     assert rep_all_subset.packages[0]["status"] == "PASS"
+    assert rep_all_subset.packages[1]["version"] == "1.6.0"
+    assert rep_all_subset.packages[1]["status"] == "PASS"
 
     for rendered in (
         rep_all_subset.to_table(),
@@ -215,7 +217,11 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert list(baseline_data["packages"].keys()) == expected_names
     assert baseline_data["packages"]["limbo-audit"]["repo"] == "akarlin3/limboAudit"
     assert baseline_data["packages"]["limbo-audit"]["module"] == "limbo_audit.audit"
-    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.5.0"
+    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.6.0"
+    assert (
+        baseline_data["packages"]["limbo-audit"]["stage"]
+        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Interactive Executive Studio"
+    )
     assert baseline_data["packages"]["limbo-audit"]["status"] == "PASS"
     assert baseline_data["packages"]["limbo-audit"]["metrics"]["verified_references"] == 59
     assert baseline_data["packages"]["limbo-audit"]["metrics"]["phantom_citations"] == 0
@@ -244,7 +250,11 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert lock_data["suite_ii_count"] == 4
     assert list(lock_data["packages"].keys()) == expected_names
     assert lock_data["packages"]["limbo-audit"]["cli"] == "limbo-audit"
-    assert lock_data["packages"]["limbo-audit"]["version"] == "1.5.0"
+    assert lock_data["packages"]["limbo-audit"]["version"] == "1.6.0"
+    assert (
+        lock_data["packages"]["limbo-audit"]["stage"]
+        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Interactive Executive Studio"
+    )
     assert lock_data["packages"]["limbo-audit"]["status"] == "PASS"
     assert len(lock_data["packages"]["limbo-audit"]["report_sha256"]) == 64
     assert isinstance(lock_data["packages"]["limbo-audit"]["git_commit"], str)

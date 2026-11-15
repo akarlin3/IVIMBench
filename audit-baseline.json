@@ -221,10 +221,10 @@
     "limbo-audit": {
       "name": "limbo-audit",
       "package": "limbo-audit",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "suite": "Suite II: Scientific Identifiability & Null-Audit Suite",
       "suite_id": "2",
-      "stage": "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Executive Deliverable Gate",
+      "stage": "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Interactive Executive Studio",
       "stage_role": "Suite II: Zero-Phantom Citation, Numerical Traceability & Epistemic Null-Audit Gate",
       "module": "limbo_audit.audit",
       "cli": "limbo-audit",
@@ -268,7 +268,7 @@
         "consistency_atol": 0.0001
       },
       "seed": 42,
-      "report_sha256": "a1ced2a68d97ec5ac966227b18948799fa1f1e6ecbea850a90a4d68f8f42eed6"
+      "report_sha256": "350f52d1f1d09bf3507bf8037df2b63bcbb7fb990a943ccda99c8872eedc4499"
     }
   }
 }

@@ -174,7 +174,7 @@ AVERYCORP_SUITE_REGISTRY: tuple[SuitePackageSpec, ...] = (
         cli="limbo-audit",
         repo="akarlin3/limboAudit",
         license="MIT",
-        stage="Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Executive Deliverable Gate",
+        stage="Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Interactive Executive Studio",
     ),
 )
 
