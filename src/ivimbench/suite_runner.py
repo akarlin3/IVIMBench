@@ -174,7 +174,7 @@ AVERYCORP_SUITE_REGISTRY: tuple[SuitePackageSpec, ...] = (
         cli="limbo-audit",
         repo="akarlin3/limboAudit",
         license="MIT",
-        stage="Suite II: Epistemic, Statistical, Figure Provenance & Rebuttal Null-Audit Gate",
+        stage="Suite II: Compiler-Grade Manuscript AST, Provenance DAG & Epistemic Null-Audit Gate",
     ),
 )
 
@@ -529,6 +529,8 @@ def _format_entry_metrics(entry: Mapping[str, Any], *, sep: str = ", ") -> str:
         "statcheck_trap_recall",
         "figure_provenance_pass",
         "rebuttal_quote_recall",
+        "dag_provenance_completeness",
+        "multifile_ast_recall",
     )
     keys = [k for k in preferred if k in metrics]
     if not keys:

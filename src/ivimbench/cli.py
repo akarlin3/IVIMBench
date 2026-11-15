@@ -72,6 +72,7 @@ from .registry import DEFAULT_REGISTERED_ESTIMATORS, run_estimator
 from .reporting import export_bids_derivatives, generate_html_report, generate_volume_viewer_html
 from .runner import DEFAULT_BENCHMARK_FAMILIES, dataframe_to_markdown, run_benchmark_suite
 from .suite_runner import (
+    build_audit_baseline,
     build_audit_lock,
     format_suite_html,
     format_suite_latex,
@@ -751,6 +752,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional output file path to write the rendered suite report.",
     )
+    p_suite.add_argument("--write-baseline", type=str, default=None, help="Write cross-suite audit-baseline.json.")
     p_suite.add_argument("--write-lock", type=str, default=None, help="Write cryptographic audit-lock.json.")
     p_suite.add_argument("--verify-lock", type=str, default=None, help="Verify SHA-256 chain against audit-lock.json.")
     p_suite.add_argument("--assert-baseline", type=str, default=None, help="Assert numeric tolerance against baseline JSON.")
@@ -1290,6 +1292,18 @@ def _cmd_suite_audit(args: argparse.Namespace) -> int:
     strict = bool(getattr(args, "strict", False))
     report = run_suite_audit(seed=seed, suite_filter=suite_filter, strict=strict)
     exit_code = 0 if report.overall_status != "HALT" else 1
+
+    write_baseline_path = getattr(args, "write_baseline", None)
+    if write_baseline_path:
+        b_path = Path(write_baseline_path)
+        existing_baseline = (
+            json.loads(b_path.read_text(encoding="utf-8")) if b_path.is_file() else None
+        )
+        baseline_payload = build_audit_baseline(
+            report, seed=seed, existing_baseline=existing_baseline
+        )
+        b_path.parent.mkdir(parents=True, exist_ok=True)
+        b_path.write_text(json.dumps(baseline_payload, indent=2) + "\n", encoding="utf-8")
 
     write_lock_path = getattr(args, "write_lock", None)
     if write_lock_path:
