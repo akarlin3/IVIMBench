@@ -6,7 +6,7 @@
   "catalog_size": 7,
   "suite_i_count": 3,
   "suite_ii_count": 4,
-  "catalog_sha256": "de75a67d90402f24fe24417a6dadf9a08cae18935896bed14705702ecff56d3f",
+  "catalog_sha256": "bb90e0b0fcffb7a938bca038918e49bb0da2783ddebbaf04e7be5844c55e042e",
   "chain_sha256": "ba15ae4a3fa76836d3f24c5c1c6f5c04ba46540ed0330cca6ebf364b27cc7b4a",
   "packages": {
     "sextant-ivim": {
@@ -108,12 +108,12 @@
       "cli": "limbo-audit",
       "repo": "akarlin3/limboAudit",
       "license": "MIT",
-      "stage": "Suite II: Compiler-Grade Manuscript AST, Provenance DAG & Epistemic Null-Audit Gate",
-      "version": "1.4.0",
-      "git_commit": "c923364196df5bcd2df8e9dfdbcc7e93da215032",
+      "stage": "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Executive Deliverable Gate",
+      "version": "1.5.0",
+      "git_commit": "589119df175b25ca99d53c9f5412ab060962b09e",
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "6d5abc3bcb6bac85f936336336f4ca870da9c72c69d09fde2376e0bb3de6eb91"
+      "report_sha256": "a1ced2a68d97ec5ac966227b18948799fa1f1e6ecbea850a90a4d68f8f42eed6"
     }
   }
 }

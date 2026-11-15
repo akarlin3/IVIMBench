@@ -59,7 +59,7 @@ def test_suite_registry_7_packages_and_limbo_audit_spec() -> None:
     assert limbo.license == "MIT"
     assert (
         limbo.stage
-        == "Suite II: Compiler-Grade Manuscript AST, Provenance DAG & Epistemic Null-Audit Gate"
+        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Executive Deliverable Gate"
     )
     assert limbo["name"] == "limbo-audit"
     assert limbo["module"] == "limbo_audit.audit"
@@ -141,7 +141,7 @@ def test_mocked_limbo_audit_dispatch_formatters_and_strict_mode(
     htm = format_suite_html(rep_s2)
 
     assert "limbo-audit" in tbl
-    assert "Compiler-Grade Manuscript AST" in tbl
+    assert "Full-Spectrum Manuscript AST" in tbl
     assert "[`limbo-audit`](https://github.com/akarlin3/limboAudit)" in md
     assert "`limbo-audit`" in md
     assert r"\texttt{limbo-audit}" in tex
@@ -196,6 +196,7 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
         assert "dag_provenance_completeness" in normalized
         assert "multifile_ast_recall" in normalized
         assert "engine6_full_spectrum_recall" in normalized
+        assert "engine7_deliverable_suite_pass" in normalized
 
     # Verify committed repository audit-baseline.json and audit-lock.json
     baseline_path = REPO_ROOT / "audit-baseline.json"
@@ -214,7 +215,7 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert list(baseline_data["packages"].keys()) == expected_names
     assert baseline_data["packages"]["limbo-audit"]["repo"] == "akarlin3/limboAudit"
     assert baseline_data["packages"]["limbo-audit"]["module"] == "limbo_audit.audit"
-    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.4.0"
+    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.5.0"
     assert baseline_data["packages"]["limbo-audit"]["status"] == "PASS"
     assert baseline_data["packages"]["limbo-audit"]["metrics"]["verified_references"] == 59
     assert baseline_data["packages"]["limbo-audit"]["metrics"]["phantom_citations"] == 0
@@ -231,6 +232,10 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert (
         baseline_data["packages"]["limbo-audit"]["metrics"]["engine6_full_spectrum_recall"] == 1.0
     )
+    assert (
+        baseline_data["packages"]["limbo-audit"]["metrics"]["engine7_deliverable_suite_pass"]
+        == 1.0
+    )
     assert len(baseline_data["packages"]["limbo-audit"]["report_sha256"]) == 64
 
     assert lock_data["seed"] == 42
@@ -239,7 +244,7 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert lock_data["suite_ii_count"] == 4
     assert list(lock_data["packages"].keys()) == expected_names
     assert lock_data["packages"]["limbo-audit"]["cli"] == "limbo-audit"
-    assert lock_data["packages"]["limbo-audit"]["version"] == "1.4.0"
+    assert lock_data["packages"]["limbo-audit"]["version"] == "1.5.0"
     assert lock_data["packages"]["limbo-audit"]["status"] == "PASS"
     assert len(lock_data["packages"]["limbo-audit"]["report_sha256"]) == 64
     assert isinstance(lock_data["packages"]["limbo-audit"]["git_commit"], str)

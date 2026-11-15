@@ -221,10 +221,10 @@
     "limbo-audit": {
       "name": "limbo-audit",
       "package": "limbo-audit",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "suite": "Suite II: Scientific Identifiability & Null-Audit Suite",
       "suite_id": "2",
-      "stage": "Suite II: Compiler-Grade Manuscript AST, Provenance DAG & Epistemic Null-Audit Gate",
+      "stage": "Suite II: Full-Spectrum Manuscript AST, Provenance DAG & Executive Deliverable Gate",
       "stage_role": "Suite II: Zero-Phantom Citation, Numerical Traceability & Epistemic Null-Audit Gate",
       "module": "limbo_audit.audit",
       "cli": "limbo-audit",
@@ -246,7 +246,8 @@
         "rebuttal_quote_recall": 1.0,
         "dag_provenance_completeness": 1.0,
         "multifile_ast_recall": 1.0,
-        "engine6_full_spectrum_recall": 1.0
+        "engine6_full_spectrum_recall": 1.0,
+        "engine7_deliverable_suite_pass": 1.0
       },
       "thresholds": {
         "max_phantom_citations": 0,
@@ -262,11 +263,12 @@
         "min_dag_provenance_completeness": 1.0,
         "min_multifile_ast_recall": 1.0,
         "min_engine6_full_spectrum_recall": 1.0,
+        "min_engine7_deliverable_suite_pass": 1.0,
         "consistency_rtol": 0.0001,
         "consistency_atol": 0.0001
       },
       "seed": 42,
-      "report_sha256": "6d5abc3bcb6bac85f936336336f4ca870da9c72c69d09fde2376e0bb3de6eb91"
+      "report_sha256": "a1ced2a68d97ec5ac966227b18948799fa1f1e6ecbea850a90a4d68f8f42eed6"
     }
   }
 }
