@@ -175,8 +175,8 @@ AVERYCORP_SUITE_REGISTRY: tuple[SuitePackageSpec, ...] = (
         repo="akarlin3/limboAudit",
         license="MIT",
         stage=(
-            "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio, "
-            "Institutional & SciML Leakage Suite"
+            "Suite II: Full-Spectrum Manuscript AST, Universal .pdf/.docx/Archive Ingestion, "
+            "Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite (v1.9.0)"
         ),
     ),
 )
