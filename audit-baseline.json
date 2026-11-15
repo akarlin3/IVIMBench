@@ -221,10 +221,10 @@
     "limbo-audit": {
       "name": "limbo-audit",
       "package": "limbo-audit",
-      "version": "1.7.0",
+      "version": "1.8.0",
       "suite": "Suite II: Scientific Identifiability & Null-Audit Suite",
       "suite_id": "2",
-      "stage": "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio & Institutional Suite",
+      "stage": "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite",
       "stage_role": "Suite II: Zero-Phantom Citation, Numerical Traceability & Epistemic Null-Audit Gate",
       "module": "limbo_audit.audit",
       "cli": "limbo-audit",
@@ -248,7 +248,8 @@
         "multifile_ast_recall": 1.0,
         "engine6_full_spectrum_recall": 1.0,
         "engine7_deliverable_suite_pass": 1.0,
-        "engine8_institutional_suite_pass": 1.0
+        "engine8_institutional_suite_pass": 1.0,
+        "engine9_sciml_leakage_suite_pass": 1.0
       },
       "thresholds": {
         "max_phantom_citations": 0,
@@ -266,11 +267,12 @@
         "min_engine6_full_spectrum_recall": 1.0,
         "min_engine7_deliverable_suite_pass": 1.0,
         "min_engine8_institutional_suite_pass": 1.0,
+        "min_engine9_sciml_leakage_suite_pass": 1.0,
         "consistency_rtol": 0.0001,
         "consistency_atol": 0.0001
       },
       "seed": 42,
-      "report_sha256": "b759253a5bd525f9b2e8f3111e314d9b13ed8f59ad5d32a45a900844b58d3066"
+      "report_sha256": "ff51a9e2bc07f45e1339b39ccf2fc266144d7bb71999b7a359947fe4f18cb1d5"
     }
   }
 }

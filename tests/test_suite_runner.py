@@ -57,9 +57,9 @@ def test_suite_registry_7_packages_and_limbo_audit_spec() -> None:
     assert limbo.cli == "limbo-audit"
     assert limbo.repo == "akarlin3/limboAudit"
     assert limbo.license == "MIT"
-    assert (
-        limbo.stage
-        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio & Institutional Suite"
+    assert limbo.stage == (
+        "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio, "
+        "Institutional & SciML Leakage Suite"
     )
     assert limbo["name"] == "limbo-audit"
     assert limbo["module"] == "limbo_audit.audit"
@@ -176,7 +176,7 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     names = [p["name"] for p in rep_all_subset.packages]
     assert names == ["ivimbench", "limbo-audit"]
     assert rep_all_subset.packages[0]["status"] == "PASS"
-    assert rep_all_subset.packages[1]["version"] == "1.7.0"
+    assert rep_all_subset.packages[1]["version"] == "1.8.0"
     assert rep_all_subset.packages[1]["status"] == "PASS"
 
     for rendered in (
@@ -200,6 +200,7 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
         assert "engine6_full_spectrum_recall" in normalized
         assert "engine7_deliverable_suite_pass" in normalized
         assert "engine8_institutional_suite_pass" in normalized
+        assert "engine9_sciml_leakage_suite_pass" in normalized
 
     # Verify committed repository audit-baseline.json and audit-lock.json
     baseline_path = REPO_ROOT / "audit-baseline.json"
@@ -218,10 +219,10 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert list(baseline_data["packages"].keys()) == expected_names
     assert baseline_data["packages"]["limbo-audit"]["repo"] == "akarlin3/limboAudit"
     assert baseline_data["packages"]["limbo-audit"]["module"] == "limbo_audit.audit"
-    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.7.0"
-    assert (
-        baseline_data["packages"]["limbo-audit"]["stage"]
-        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio & Institutional Suite"
+    assert baseline_data["packages"]["limbo-audit"]["version"] == "1.8.0"
+    assert baseline_data["packages"]["limbo-audit"]["stage"] == (
+        "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio, "
+        "Institutional & SciML Leakage Suite"
     )
     assert baseline_data["packages"]["limbo-audit"]["status"] == "PASS"
     assert baseline_data["packages"]["limbo-audit"]["metrics"]["verified_references"] == 59
@@ -247,6 +248,10 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
         baseline_data["packages"]["limbo-audit"]["metrics"]["engine8_institutional_suite_pass"]
         == 1.0
     )
+    assert (
+        baseline_data["packages"]["limbo-audit"]["metrics"]["engine9_sciml_leakage_suite_pass"]
+        == 1.0
+    )
     assert len(baseline_data["packages"]["limbo-audit"]["report_sha256"]) == 64
 
     assert lock_data["seed"] == 42
@@ -255,10 +260,10 @@ def test_run_suite_audit_all_and_ivimbench_baseline_lock_verification(tmp_path: 
     assert lock_data["suite_ii_count"] == 4
     assert list(lock_data["packages"].keys()) == expected_names
     assert lock_data["packages"]["limbo-audit"]["cli"] == "limbo-audit"
-    assert lock_data["packages"]["limbo-audit"]["version"] == "1.7.0"
-    assert (
-        lock_data["packages"]["limbo-audit"]["stage"]
-        == "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio & Institutional Suite"
+    assert lock_data["packages"]["limbo-audit"]["version"] == "1.8.0"
+    assert lock_data["packages"]["limbo-audit"]["stage"] == (
+        "Suite II: Full-Spectrum Manuscript AST, Provenance DAG, Interactive Studio, "
+        "Institutional & SciML Leakage Suite"
     )
     assert lock_data["packages"]["limbo-audit"]["status"] == "PASS"
     assert len(lock_data["packages"]["limbo-audit"]["report_sha256"]) == 64
