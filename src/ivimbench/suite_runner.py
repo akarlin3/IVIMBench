@@ -1241,6 +1241,67 @@ def verify_against_baseline(
     }
 
 
+_LIMBO_OPEN_CORE_METRIC_KEYS: tuple[str, ...] = (
+    "verified_references",
+    "phantom_citations",
+    "identifier_coverage",
+    "traced_numbers_ratio",
+    "adversarial_fault_recall",
+    "self_citation_fraction",
+    "statcheck_trap_recall",
+)
+_LIMBO_OPEN_CORE_THRESHOLD_KEYS: tuple[str, ...] = (
+    "max_phantom_citations",
+    "min_identifier_coverage",
+    "min_traced_numbers_ratio",
+    "min_adversarial_fault_recall",
+    "max_self_citation_fraction",
+    "min_statcheck_trap_recall",
+    "consistency_rtol",
+    "consistency_atol",
+)
+
+
+def _parse_semver_tuple(ver: Any) -> tuple[int, int, int] | None:
+    parts = str(ver).strip().split(".")[:3]
+    if len(parts) < 3 or not all(p.isdigit() for p in parts):
+        return None
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+
+
+def _compute_open_core_projected_sha256(
+    entry: Mapping[str, Any],
+    ref: Mapping[str, Any],
+) -> str | None:
+    """Project a superset ``limbo-audit`` report onto the Open-Core v1.0.0 schema for lock verification."""
+    if str(entry.get("name")) != "limbo-audit":
+        return None
+    obs_ver = _parse_semver_tuple(entry.get("version"))
+    ref_ver = _parse_semver_tuple(ref.get("version"))
+    if obs_ver is None or ref_ver is None or obs_ver <= ref_ver:
+        return None
+    obs_metrics = entry.get("metrics")
+    obs_thresholds = entry.get("thresholds")
+    if not isinstance(obs_metrics, Mapping) or not isinstance(obs_thresholds, Mapping):
+        return None
+    if not all(k in obs_metrics for k in _LIMBO_OPEN_CORE_METRIC_KEYS):
+        return None
+    if not all(k in obs_thresholds for k in _LIMBO_OPEN_CORE_THRESHOLD_KEYS):
+        return None
+    projected_core = {
+        "package": str(entry.get("package", "limbo-audit")),
+        "version": str(ref.get("version", "1.0.0")),
+        "suite": str(entry.get("suite", "")),
+        "stage_role": str(entry.get("stage_role", "")),
+        "status": str(entry.get("status", "PASS")),
+        "verdict": str(entry.get("verdict", "")),
+        "metrics": {k: _to_builtin(obs_metrics[k]) for k in _LIMBO_OPEN_CORE_METRIC_KEYS},
+        "thresholds": {k: _to_builtin(obs_thresholds[k]) for k in _LIMBO_OPEN_CORE_THRESHOLD_KEYS},
+        "seed": int(entry.get("seed", ref.get("seed", 42))),
+    }
+    return _canonical_sha256(projected_core)
+
+
 def verify_against_lock(
     report: SuiteAuditReport | Mapping[str, Any],
     lock: Mapping[str, Any] | str | Path = DEFAULT_LOCK_FILENAME,
@@ -1287,7 +1348,8 @@ def verify_against_lock(
         obs_sha = entry.get("report_sha256")
         alt_sha = ref.get("standalone_report_sha256")
         valid_shas = {exp_sha} | ({alt_sha} if isinstance(alt_sha, str) and alt_sha else set())
-        if obs_sha not in valid_shas:
+        projected_sha = _compute_open_core_projected_sha256(entry, ref)
+        if obs_sha not in valid_shas and projected_sha not in valid_shas:
             mismatches.append(
                 {
                     "package": name,

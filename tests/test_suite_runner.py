@@ -329,3 +329,48 @@ def test_cli_suite_audit_subcommand(
     md_content = md_path.read_text(encoding="utf-8")
     assert "limbo-audit" in md_content
     assert "akarlin3/limboAudit" in md_content
+
+
+def test_open_core_and_superset_limbo_audit_baseline_lock_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_path = REPO_ROOT / "audit-baseline.json"
+    lock_path = REPO_ROOT / "audit-lock.json"
+    baseline_limbo = json.loads(baseline_path.read_text(encoding="utf-8"))["packages"]["limbo-audit"]
+
+    fake_pkg: Any = types.ModuleType("limbo_audit")
+    fake_audit: Any = types.ModuleType("limbo_audit.audit")
+
+    superset_metrics = dict(baseline_limbo["metrics"])
+    superset_metrics["extended_check_recall"] = 1.0
+    superset_thresholds = dict(baseline_limbo["thresholds"])
+    superset_thresholds["min_extended_check_recall"] = 1.0
+
+    def _superset_run_audit(seed: int = 42) -> AuditReport:
+        return AuditReport(
+            package="limbo-audit",
+            version="1.9.1",
+            suite=SUITE_II_NAME,
+            stage_role=baseline_limbo["stage_role"],
+            status="PASS",
+            verdict=baseline_limbo["verdict"],
+            metrics=dict(superset_metrics),
+            thresholds=dict(superset_thresholds),
+            seed=int(seed),
+        )
+
+    fake_audit.run_audit = _superset_run_audit
+    fake_pkg.audit = fake_audit
+    monkeypatch.setitem(sys.modules, "limbo_audit", fake_pkg)
+    monkeypatch.setitem(sys.modules, "limbo_audit.audit", fake_audit)
+
+    rep_superset = run_suite_audit(seed=42, suite_filter="2", packages=["limbo-audit"])
+    assert verify_against_baseline(rep_superset, baseline_path)["passed"] is True
+    assert verify_against_lock(rep_superset, lock_path)["passed"] is True
+
+    # Any drift in a core Open-Core metric must fail both baseline and lock verification
+    superset_metrics["phantom_citations"] = 1
+    rep_drifted = run_suite_audit(seed=42, suite_filter="2", packages=["limbo-audit"])
+    assert verify_against_baseline(rep_drifted, baseline_path)["passed"] is False
+    assert verify_against_lock(rep_drifted, lock_path)["passed"] is False
+
