@@ -176,7 +176,7 @@ AVERYCORP_SUITE_REGISTRY: tuple[SuitePackageSpec, ...] = (
         license="MIT",
         stage=(
             "Suite II: Full-Spectrum Manuscript AST, Universal .pdf/.docx/Archive Ingestion, "
-            "Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite (v1.9.0)"
+            "Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite (v1.9.1)"
         ),
     ),
 )
