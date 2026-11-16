@@ -175,8 +175,8 @@ AVERYCORP_SUITE_REGISTRY: tuple[SuitePackageSpec, ...] = (
         repo="akarlin3/limboAudit",
         license="MIT",
         stage=(
-            "Suite II: Full-Spectrum Manuscript AST, Universal .pdf/.docx/Archive Ingestion, "
-            "Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite (v1.9.1)"
+            "Suite II: Zero-Phantom Citation, Numerical Consistency, Statistical/GRIM "
+            "& Release-Artifact Provenance Gate (v1.0.0)"
         ),
     ),
 )
@@ -527,9 +527,10 @@ def _format_entry_metrics(entry: Mapping[str, Any], *, sep: str = ", ") -> str:
     preferred = (
         "verified_references",
         "traced_numbers_ratio",
+        "adversarial_fault_recall",
+        "statcheck_trap_recall",
         "semantic_drift_recall",
         "autofix_roundtrip_pass",
-        "statcheck_trap_recall",
         "figure_provenance_pass",
         "rebuttal_quote_recall",
         "dag_provenance_completeness",

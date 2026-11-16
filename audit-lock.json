@@ -6,7 +6,7 @@
   "catalog_size": 7,
   "suite_i_count": 3,
   "suite_ii_count": 4,
-  "catalog_sha256": "1cb28547a1fe7e38d53998eee9824c5fc0ac865a247b031992ec36dcc1950f80",
+  "catalog_sha256": "802b59df42c5fc05c7cca5abe9ce523973730b8f838293510a3222239ea844e1",
   "chain_sha256": "ba15ae4a3fa76836d3f24c5c1c6f5c04ba46540ed0330cca6ebf364b27cc7b4a",
   "packages": {
     "sextant-ivim": {
@@ -108,12 +108,12 @@
       "cli": "limbo-audit",
       "repo": "akarlin3/limboAudit",
       "license": "MIT",
-      "stage": "Suite II: Full-Spectrum Manuscript AST, Universal .pdf/.docx/Archive Ingestion, Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite (v1.9.1)",
-      "version": "1.9.1",
-      "git_commit": "915a74c559e7919ebf75e2dbb99ef6b959f6eed1",
+      "stage": "Suite II: Zero-Phantom Citation, Numerical Consistency, Statistical/GRIM & Release-Artifact Provenance Gate (v1.0.0)",
+      "version": "1.0.0",
+      "git_commit": "75ef8584e62acef79574e963d55812a1c36beb1b",
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "24a610a51936b57b26003999fe648d7361e52c93b957156a6b8ea62a883742d1"
+      "report_sha256": "94800629b83c6d2dafd2d0e5e3ebce5d861dd80a178651d7a00e26f638da9ec1"
     }
   }
 }

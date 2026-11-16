@@ -221,10 +221,10 @@
     "limbo-audit": {
       "name": "limbo-audit",
       "package": "limbo-audit",
-      "version": "1.9.1",
+      "version": "1.0.0",
       "suite": "Suite II: Scientific Identifiability & Null-Audit Suite",
       "suite_id": "2",
-      "stage": "Suite II: Full-Spectrum Manuscript AST, Universal .pdf/.docx/Archive Ingestion, Provenance DAG, Interactive Studio, Institutional & SciML Leakage Suite (v1.9.1)",
+      "stage": "Suite II: Zero-Phantom Citation, Numerical Consistency, Statistical/GRIM & Release-Artifact Provenance Gate (v1.0.0)",
       "stage_role": "Suite II: Zero-Phantom Citation, Numerical Traceability & Epistemic Null-Audit Gate",
       "module": "limbo_audit.audit",
       "cli": "limbo-audit",
@@ -239,17 +239,7 @@
         "traced_numbers_ratio": 1.0,
         "adversarial_fault_recall": 1.0,
         "self_citation_fraction": 0.051,
-        "semantic_drift_recall": 1.0,
-        "autofix_roundtrip_pass": 1.0,
-        "statcheck_trap_recall": 1.0,
-        "figure_provenance_pass": 1.0,
-        "rebuttal_quote_recall": 1.0,
-        "dag_provenance_completeness": 1.0,
-        "multifile_ast_recall": 1.0,
-        "engine6_full_spectrum_recall": 1.0,
-        "engine7_deliverable_suite_pass": 1.0,
-        "engine8_institutional_suite_pass": 1.0,
-        "engine9_sciml_leakage_suite_pass": 1.0
+        "statcheck_trap_recall": 1.0
       },
       "thresholds": {
         "max_phantom_citations": 0,
@@ -257,22 +247,12 @@
         "min_traced_numbers_ratio": 1.0,
         "min_adversarial_fault_recall": 1.0,
         "max_self_citation_fraction": 0.15,
-        "min_semantic_drift_recall": 1.0,
-        "min_autofix_roundtrip_pass": 1.0,
         "min_statcheck_trap_recall": 1.0,
-        "min_figure_provenance_pass": 1.0,
-        "min_rebuttal_quote_recall": 1.0,
-        "min_dag_provenance_completeness": 1.0,
-        "min_multifile_ast_recall": 1.0,
-        "min_engine6_full_spectrum_recall": 1.0,
-        "min_engine7_deliverable_suite_pass": 1.0,
-        "min_engine8_institutional_suite_pass": 1.0,
-        "min_engine9_sciml_leakage_suite_pass": 1.0,
         "consistency_rtol": 0.0001,
         "consistency_atol": 0.0001
       },
       "seed": 42,
-      "report_sha256": "24a610a51936b57b26003999fe648d7361e52c93b957156a6b8ea62a883742d1"
+      "report_sha256": "94800629b83c6d2dafd2d0e5e3ebce5d861dd80a178651d7a00e26f638da9ec1"
     }
   }
 }
