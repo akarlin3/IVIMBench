@@ -6,8 +6,8 @@
   "catalog_size": 7,
   "suite_i_count": 3,
   "suite_ii_count": 4,
-  "catalog_sha256": "802b59df42c5fc05c7cca5abe9ce523973730b8f838293510a3222239ea844e1",
-  "chain_sha256": "ba15ae4a3fa76836d3f24c5c1c6f5c04ba46540ed0330cca6ebf364b27cc7b4a",
+  "catalog_sha256": "d649b4a098df4099c98649e82eecfc10734f29d4a10b8de4dd2bbc6c85bb6e99",
+  "chain_sha256": "d59264137eaab7e06331cd5149106b5a3963de83f237dbe8fcd669c023ea41fa",
   "packages": {
     "sextant-ivim": {
       "name": "sextant-ivim",
@@ -37,7 +37,7 @@
       "git_commit": "5bcbc464e419fab1a1df4ae6ea1d6c3effcbc0e6",
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "1a009dd6389996a89eb3a98e560302497d33211175b230a01173976c5e6fbaa3"
+      "report_sha256": "3707677776dc61f12b18a991d086cb1489b291c69564c1301b0ee138d3606b99"
     },
     "ivimbench": {
       "name": "ivimbench",
@@ -52,7 +52,7 @@
       "git_commit": null,
       "status": "PASS",
       "seed": 42,
-      "report_sha256": "7d449033e298e6533c1548ec0187d094afcc00a9efb1ecc426ca1d6d2aac5ee6",
+      "report_sha256": "abc14eee831c13927ec290ee005cdf8174ed766015e0e29f423482855ddd9c54",
       "standalone_report_sha256": "7d449033e298e6533c1548ec0187d094afcc00a9efb1ecc426ca1d6d2aac5ee6"
     },
     "weak-sindy": {

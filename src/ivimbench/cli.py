@@ -81,6 +81,7 @@ from .suite_runner import (
     run_suite_audit,
     verify_against_baseline,
     verify_against_lock,
+    write_web_fixture,
 )
 
 __all__ = ["build_parser", "main", "suite_audit_main", "suite_main"]
@@ -757,6 +758,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_suite.add_argument("--verify-lock", type=str, default=None, help="Verify SHA-256 chain against audit-lock.json.")
     p_suite.add_argument("--assert-baseline", type=str, default=None, help="Assert numeric tolerance against baseline JSON.")
     p_suite.add_argument("--json", action="store_true", help="Emit JSON output (shorthand for --format json).")
+    p_suite.add_argument(
+        "--export-web-fixture",
+        type=str,
+        default=None,
+        metavar="PATH.json",
+        help=(
+            "Write a deterministic web verification bundle (7-package AuditReport ledger, "
+            "Suite I AuditChain state table, sample BIDS desc-ivim_audit sidecars)."
+        ),
+    )
     p_suite.set_defaults(func=_cmd_suite_audit)
 
     return parser
@@ -1345,6 +1356,10 @@ def _cmd_suite_audit(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"[SUITE BASELINE ASSERTION FAILED] {exc}", file=sys.stderr)
             exit_code = 1
+
+    web_fixture_path = getattr(args, "export_web_fixture", None)
+    if web_fixture_path:
+        write_web_fixture(web_fixture_path, report, seed=seed)
 
     fmt = "json" if bool(getattr(args, "json", False)) else str(getattr(args, "output_format", "table"))
     if fmt == "json":

@@ -45,6 +45,12 @@ __all__ = [
     "refresh_suite_artifacts",
     "verify_against_baseline",
     "verify_against_lock",
+    "WEB_FIXTURE_SCHEMA_VERSION",
+    "AUDIT_CHAIN_STATE_TABLE",
+    "build_audit_chain_states",
+    "build_sample_bids_sidecars",
+    "build_web_fixture",
+    "write_web_fixture",
 ]
 
 SuiteIdLiteral = Literal["1", "2"]
@@ -1364,3 +1370,324 @@ def verify_against_lock(
         "verified_installed_packages": verified,
         "mismatches": mismatches,
     }
+
+
+# ---------------------------------------------------------------------------
+# Unified deterministic web verification fixture (``--export-web-fixture``)
+# ---------------------------------------------------------------------------
+
+WEB_FIXTURE_SCHEMA_VERSION = "1.0.0"
+_BIDS_VERSION = "1.9.0"
+_IVIMBENCH_CODE_URL = "https://github.com/akarlin3/IVIMBench"
+
+# Canonical Suite I decision table: Stage 1 (sextantIVIM D* railing gate) x
+# Stage 2 (conformalIVIM cohort-shift gate) -> Stage 3 (IVIMBench RT action).
+# ``regret_vs_baseline_dose`` is the clinical utility regret of the emitted action
+# relative to the baseline-dose policy; holding the baseline dose is zero-regret
+# by construction.
+AUDIT_CHAIN_STATE_TABLE: tuple[dict[str, Any], ...] = (
+    {
+        "state_id": "S1_PASS__S2_PASS",
+        "stage1_sextant_ivim": {"status": "PASS", "gate": "interior_identifiable"},
+        "stage2_conformal_ivim": {"status": "PASS", "gate": "in_distribution"},
+        "stage3_action": "PROCEED",
+        "rationale": (
+            "D* interior-identifiable and calibration cohort in-distribution: "
+            "conformal intervals are valid; proceed with VoI-gated dose escalation."
+        ),
+    },
+    {
+        "state_id": "S1_PASS__S2_WARN",
+        "stage1_sextant_ivim": {"status": "PASS", "gate": "interior_identifiable"},
+        "stage2_conformal_ivim": {"status": "WARN", "gate": "cohort_shift"},
+        "stage3_action": "WIDEN_MONDRIAN_STRATA",
+        "rationale": (
+            "Fits identifiable but DeploymentValidityMonitor fires a cohort shift: "
+            "recalibrate with widened Mondrian (D*-tercile) strata before escalation."
+        ),
+    },
+    {
+        "state_id": "S1_WARN__S2_PASS",
+        "stage1_sextant_ivim": {"status": "WARN", "gate": "dstar_boundary_railed"},
+        "stage2_conformal_ivim": {"status": "PASS", "gate": "in_distribution"},
+        "stage3_action": "HOLD_BASELINE_DOSE",
+        "regret_vs_baseline_dose": 0.0,
+        "rationale": (
+            "D* optimizer railed at the bound: perfusion parameters are not identifiable, "
+            "so no interval can license escalation; hold baseline dose (zero regret)."
+        ),
+    },
+    {
+        "state_id": "S1_WARN__S2_WARN",
+        "stage1_sextant_ivim": {"status": "WARN", "gate": "dstar_boundary_railed"},
+        "stage2_conformal_ivim": {"status": "WARN", "gate": "cohort_shift"},
+        "stage3_action": "HOLD_BASELINE_DOSE",
+        "regret_vs_baseline_dose": 0.0,
+        "rationale": (
+            "Railed D* fits under cohort shift: both identifiability and calibration "
+            "validity fail; hold baseline dose (zero regret)."
+        ),
+    },
+)
+
+
+def _gate_is_clear(status: Any) -> bool:
+    return str(status).upper() in ("PASS", "SKIPPED")
+
+
+def build_audit_chain_states(
+    report: SuiteAuditReport | Mapping[str, Any] | None = None,
+    *,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Return the 4-state Suite I ``AuditChain`` decision table plus the live ``seed`` chain."""
+    rep_dict = _coerce_report_dict(report, seed=seed, suite_filter="all")
+    by_name = {str(p.get("name")): p for p in rep_dict.get("packages", [])}
+    ivim_metrics = dict((by_name.get("ivimbench") or {}).get("metrics") or {})
+    regret_reduction = ivim_metrics.get("closed_loop_regret_reduction")
+
+    states: list[dict[str, Any]] = []
+    for row in AUDIT_CHAIN_STATE_TABLE:
+        state = json.loads(json.dumps(row))
+        if state["stage3_action"] != "HOLD_BASELINE_DOSE":
+            state["closed_loop_regret_reduction"] = (
+                float(regret_reduction) if isinstance(regret_reduction, (int, float)) else None
+            )
+        state["state_sha256"] = _canonical_sha256(state)
+        states.append(state)
+
+    s1 = by_name.get("sextant-ivim") or {}
+    s2 = by_name.get("conformal-ivim") or {}
+    s3 = by_name.get("ivimbench") or {}
+    s1_clear = _gate_is_clear(s1.get("status", "SKIPPED"))
+    s2_clear = _gate_is_clear(s2.get("status", "SKIPPED"))
+    live_id = f"S1_{'PASS' if s1_clear else 'WARN'}__S2_{'PASS' if s2_clear else 'WARN'}"
+    halted = any(str(x.get("status", "")).upper() == "HALT" for x in (s1, s2, s3))
+    live_action = (
+        "HALT"
+        if halted
+        else next(s["stage3_action"] for s in states if s["state_id"] == live_id)
+    )
+    stage_digests = [
+        str(x.get("report_sha256") or "") for x in (s1, s2, s3)
+    ]
+    live_chain = {
+        "pipeline": "sextantIVIM -> conformalIVIM -> IVIMBench",
+        "seed": int(rep_dict.get("seed", seed)),
+        "stages": [
+            {
+                "stage_index": idx,
+                "package": name,
+                "installed": bool(entry.get("installed", False)),
+                "status": str(entry.get("status", "SKIPPED")),
+                "report_sha256": entry.get("report_sha256"),
+            }
+            for idx, (name, entry) in enumerate(
+                (("sextant-ivim", s1), ("conformal-ivim", s2), ("ivimbench", s3)), start=1
+            )
+        ],
+        "ecosystem_complete": all(bool(x.get("installed")) for x in (s1, s2, s3)),
+        "matched_state_id": None if halted else live_id,
+        "stage3_action": live_action,
+        "chain_sha256": hashlib.sha256(
+            json.dumps(stage_digests, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+    return {
+        "suite": SUITE_I_NAME,
+        "pipeline": "Stage 1 (sextantIVIM) x Stage 2 (conformalIVIM) -> Stage 3 (IVIMBench)",
+        "states": states,
+        "live_chain": live_chain,
+    }
+
+
+def _bids_generated_by() -> list[dict[str, str]]:
+    return [
+        {
+            "Name": "IVIMBench",
+            "Version": __version__,
+            "Description": (
+                "AveryCorp Suite I Stage-3 IVIM trust-spine audit "
+                "(sextantIVIM railing gate -> conformalIVIM shift gate -> IVIMBench action)"
+            ),
+            "CodeURL": _IVIMBENCH_CODE_URL,
+        }
+    ]
+
+
+def build_sample_bids_sidecars(seed: int = 42) -> dict[str, Any]:
+    """Return two deterministic BIDS-Derivatives ``<prefix>_desc-ivim_audit.json`` QA sidecars."""
+    states = {s["state_id"]: s for s in AUDIT_CHAIN_STATE_TABLE}
+
+    def _sidecar(
+        *,
+        prefix: str,
+        source: str,
+        protocol: str,
+        bvalues: list[float],
+        n_fg: int,
+        railed: int,
+        monitor: dict[str, Any],
+        state_id: str,
+        stage1_status: str,
+        stage2_status: str,
+    ) -> dict[str, Any]:
+        rail_frac = round(railed / n_fg, 3)
+        action = states[state_id]["stage3_action"]
+        doc: dict[str, Any] = {
+            "Description": "IVIMBench Suite I IVIM trust-spine QA audit sidecar",
+            "Sources": [f"bids::{prefix.split('_')[0]}/dwi/{prefix}_dwi.nii.gz"],
+            "GeneratedBy": _bids_generated_by(),
+            "SoftwareName": "IVIMBench",
+            "SoftwareVersion": __version__,
+            "ProtocolName": protocol,
+            "BValues": bvalues,
+            "Seed": int(seed),
+            "FixtureSource": source,
+            "ForegroundVoxels": n_fg,
+            "RailedVoxels": railed,
+            "railing_fraction_1d": rail_frac,
+            "DeploymentValidityMonitor": monitor,
+            "AuditChain": {
+                "pipeline": "sextantIVIM -> conformalIVIM -> IVIMBench",
+                "stage1_sextant_ivim": stage1_status,
+                "stage2_conformal_ivim": stage2_status,
+                "state_id": state_id,
+                "stage3_action": action,
+            },
+            "Warnings": [],
+        }
+        if "regret_vs_baseline_dose" in states[state_id]:
+            doc["AuditChain"]["regret_vs_baseline_dose"] = states[state_id][
+                "regret_vs_baseline_dose"
+            ]
+        if rail_frac >= 0.5:
+            doc["Warnings"].append(
+                f"DSTAR_BOUNDARY_RAILING: {rail_frac:.1%} of foreground voxels railed at the "
+                "D* optimizer bound; perfusion parameters not identifiable."
+            )
+        if monitor["fires"]:
+            doc["Warnings"].append(
+                "DEPLOYMENT_SHIFT: DeploymentValidityMonitor fired (Mahalanobis p="
+                f"{monitor['p_value']:.4f}, AUC={monitor['auc']:.3f}); calibration cohort "
+                "is not exchangeable with this acquisition."
+            )
+        doc["QCStatus"] = "PASS" if not doc["Warnings"] else "WARN"
+        doc["SidecarSHA256"] = _canonical_sha256(doc)
+        return doc
+
+    osipi_prefix = "sub-01"
+    tcga_prefix = "sub-02"
+    osipi = _sidecar(
+        prefix=osipi_prefix,
+        source="OSIPI TF2.4 IVIM DRO (interior-identifiable abdomen phantom)",
+        protocol="osipi",
+        bvalues=[0.0, 10.0, 20.0, 30.0, 50.0, 80.0, 100.0, 200.0, 400.0, 600.0, 800.0],
+        n_fg=4096,
+        railed=0,
+        monitor={
+            "fires": False,
+            "is_stale": False,
+            "auc": 0.512,
+            "mahalanobis_stat": 2.84,
+            "p_value": 0.4172,
+            "residual_rms_ratio": 1.01,
+            "backend": "conformal_ivim.DeploymentValidityMonitor",
+        },
+        state_id="S1_PASS__S2_PASS",
+        stage1_status="PASS",
+        stage2_status="PASS",
+    )
+    tcga = _sidecar(
+        prefix=tcga_prefix,
+        source="TCGA-LIHC liver DWI (clinical, sparse b-value protocol)",
+        protocol="clinical_sparse",
+        bvalues=[0.0, 50.0, 400.0, 800.0],
+        n_fg=4096,
+        railed=2220,
+        monitor={
+            "fires": True,
+            "is_stale": True,
+            "auc": 0.873,
+            "mahalanobis_stat": 41.37,
+            "p_value": 0.0025,
+            "residual_rms_ratio": 1.86,
+            "backend": "conformal_ivim.DeploymentValidityMonitor",
+        },
+        state_id="S1_WARN__S2_WARN",
+        stage1_status="WARN",
+        stage2_status="WARN",
+    )
+    return {
+        "dataset_description": {
+            "Name": "IVIMBench Suite I QA Audit Derivatives (web fixture)",
+            "BIDSVersion": _BIDS_VERSION,
+            "DatasetType": "derivative",
+            "License": "MIT",
+            "GeneratedBy": _bids_generated_by(),
+        },
+        "osipi_interior_pass": {
+            "filename": f"{osipi_prefix}/dwi/{osipi_prefix}_desc-ivim_audit.json",
+            "sidecar": osipi,
+        },
+        "tcga_lihc_railed_54pct_shift": {
+            "filename": f"{tcga_prefix}/dwi/{tcga_prefix}_desc-ivim_audit.json",
+            "sidecar": tcga,
+        },
+    }
+
+
+def build_web_fixture(
+    report: SuiteAuditReport | None = None,
+    *,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Build the unified deterministic web verification payload.
+
+    Combines the 7-package ``AuditReport`` ledger, the 4-state Suite I ``AuditChain``
+    decision table, and two sample BIDS ``<prefix>_desc-ivim_audit.json`` sidecars.
+    No timestamps or platform fingerprints are embedded, so identical installs and
+    ``seed`` produce byte-identical output.
+    """
+    active = report if report is not None else run_suite_audit(seed=seed, suite_filter="all")
+    rep_dict = active.to_dict()
+    packages = [dict(p) for p in rep_dict["packages"]]
+    suite_summary = {
+        "seed": int(active.seed),
+        "catalog_size": int(active.catalog_size),
+        "overall_status": str(active.overall_status),
+        "ecosystem_complete": bool(active.ecosystem_complete),
+        "summary": dict(active.summary),
+        "registry": [spec.to_dict() for spec in AVERYCORP_SUITE_REGISTRY],
+        "packages": packages,
+        "report_sha256": {str(p["name"]): p.get("report_sha256") for p in packages},
+        "baseline_metrics": {
+            str(p["name"]): dict(p.get("metrics") or {}) for p in packages if p.get("installed")
+        },
+        "latex_booktabs": format_suite_latex(active),
+    }
+    payload: dict[str, Any] = {
+        "schema_version": WEB_FIXTURE_SCHEMA_VERSION,
+        "generator": "ivimbench.suite_runner.build_web_fixture",
+        "ivimbench_version": __version__,
+        "seed": int(active.seed),
+        "suite_summary": suite_summary,
+        "audit_chain_states": build_audit_chain_states(active, seed=int(active.seed)),
+        "sample_bids_sidecars": build_sample_bids_sidecars(seed=int(active.seed)),
+    }
+    payload["fixture_sha256"] = _canonical_sha256(payload)
+    return payload
+
+
+def write_web_fixture(
+    path: str | Path,
+    report: SuiteAuditReport | None = None,
+    *,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Write :func:`build_web_fixture` output to ``path`` as sorted, indented JSON."""
+    payload = build_web_fixture(report, seed=seed)
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload

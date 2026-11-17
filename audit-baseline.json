@@ -64,14 +64,14 @@
       "repo": "akarlin3/conformalIVIM",
       "license": "MIT",
       "status": "PASS",
-      "verdict": "EXCHANGEABLE_AND_CALIBRATED: Mondrian-CQR coverage = 0.930 (high-D* tercile = 0.881), Hotelling p = 0.325, OOD flagged = 0.085.",
+      "verdict": "EXCHANGEABLE_AND_CALIBRATED: Mondrian-CQR coverage = 0.930 (high-D* tercile = 0.881), Hotelling p = 0.277, OOD flagged = 0.085.",
       "metrics": {
         "marginal_coverage_split": 0.86,
         "marginal_coverage_cqr": 0.92,
         "marginal_coverage_mondrian_cqr": 0.93,
         "marginal_coverage_aci": 0.895,
         "high_dstar_tercile_coverage": 0.880597,
-        "hotelling_t2_p_value": 0.324748,
+        "hotelling_t2_p_value": 0.276631,
         "cohort_shift_fires": false,
         "voxel_ood_flagged_fraction": 0.085
       },
@@ -83,7 +83,7 @@
         "max_ood_flagged_fraction": 0.12
       },
       "seed": 42,
-      "report_sha256": "1a009dd6389996a89eb3a98e560302497d33211175b230a01173976c5e6fbaa3"
+      "report_sha256": "3707677776dc61f12b18a991d086cb1489b291c69564c1301b0ee138d3606b99"
     },
     "ivimbench": {
       "name": "ivimbench",
@@ -109,7 +109,7 @@
         "closed_loop_regret_reduction": 0.032328,
         "closed_loop_oar_sparing_gy": 0.017504,
         "fitter_backend": "ivimbench_builtin",
-        "uq_backend": "ivimbench_builtin"
+        "uq_backend": "conformal_ivim"
       },
       "thresholds": {
         "continuity_tolerance": 1e-12,
@@ -118,7 +118,7 @@
         "min_closed_loop_regret_reduction": 0.0
       },
       "seed": 42,
-      "report_sha256": "7d449033e298e6533c1548ec0187d094afcc00a9efb1ecc426ca1d6d2aac5ee6"
+      "report_sha256": "abc14eee831c13927ec290ee005cdf8174ed766015e0e29f423482855ddd9c54"
     },
     "weak-sindy": {
       "name": "weak-sindy",
