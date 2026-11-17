@@ -1528,6 +1528,7 @@ def build_sample_bids_sidecars(seed: int = 42) -> dict[str, Any]:
         n_fg: int,
         railed: int,
         monitor: dict[str, Any],
+        coverage: dict[str, Any],
         state_id: str,
         stage1_status: str,
         stage2_status: str,
@@ -1548,6 +1549,7 @@ def build_sample_bids_sidecars(seed: int = 42) -> dict[str, Any]:
             "RailedVoxels": railed,
             "railing_fraction_1d": rail_frac,
             "DeploymentValidityMonitor": monitor,
+            "ConformalCoverage": coverage,
             "AuditChain": {
                 "pipeline": "sextantIVIM -> conformalIVIM -> IVIMBench",
                 "stage1_sextant_ivim": stage1_status,
@@ -1572,6 +1574,12 @@ def build_sample_bids_sidecars(seed: int = 42) -> dict[str, Any]:
                 f"{monitor['p_value']:.4f}, AUC={monitor['auc']:.3f}); calibration cohort "
                 "is not exchangeable with this acquisition."
             )
+        cov_gap = float(coverage["nominal_coverage"]) - float(coverage["empirical_coverage"])
+        if cov_gap > 0.05:
+            doc["Warnings"].append(
+                f"COVERAGE_SHORTFALL: empirical coverage {coverage['empirical_coverage']:.3f} is "
+                f"{cov_gap:.3f} below the nominal {coverage['nominal_coverage']:.2f} target."
+            )
         doc["QCStatus"] = "PASS" if not doc["Warnings"] else "WARN"
         doc["SidecarSHA256"] = _canonical_sha256(doc)
         return doc
@@ -1594,6 +1602,7 @@ def build_sample_bids_sidecars(seed: int = 42) -> dict[str, Any]:
             "residual_rms_ratio": 1.01,
             "backend": "conformal_ivim.DeploymentValidityMonitor",
         },
+        coverage={"method": "mondrian_cqr", "nominal_coverage": 0.9, "empirical_coverage": 0.93},
         state_id="S1_PASS__S2_PASS",
         stage1_status="PASS",
         stage2_status="PASS",
@@ -1614,6 +1623,7 @@ def build_sample_bids_sidecars(seed: int = 42) -> dict[str, Any]:
             "residual_rms_ratio": 1.86,
             "backend": "conformal_ivim.DeploymentValidityMonitor",
         },
+        coverage={"method": "mondrian_cqr", "nominal_coverage": 0.9, "empirical_coverage": 0.712},
         state_id="S1_WARN__S2_WARN",
         stage1_status="WARN",
         stage2_status="WARN",

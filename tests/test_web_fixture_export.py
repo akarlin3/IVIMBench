@@ -142,6 +142,9 @@ def test_bids_sidecars_generated_by_compliance(fixture: dict[str, Any]) -> None:
     assert tcga["railing_fraction_1d"] == 0.542
     assert tcga["DeploymentValidityMonitor"]["fires"] is True
     assert any("DEPLOYMENT_SHIFT" in w for w in tcga["Warnings"])
+    assert any("COVERAGE_SHORTFALL" in w for w in tcga["Warnings"])
+    assert tcga["ConformalCoverage"]["empirical_coverage"] < tcga["ConformalCoverage"]["nominal_coverage"]
+    assert osipi["ConformalCoverage"]["empirical_coverage"] >= osipi["ConformalCoverage"]["nominal_coverage"]
     assert tcga["AuditChain"]["stage3_action"] == "HOLD_BASELINE_DOSE"
     assert tcga["AuditChain"]["regret_vs_baseline_dose"] == 0.0
 
